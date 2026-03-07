@@ -1,5 +1,12 @@
 # Compiled binary
+campus
 example
+*.o
+*.dSYM/
 
 # macOS
 .DS_Store
+
+# Editor
+.vscode/
+*.swp
