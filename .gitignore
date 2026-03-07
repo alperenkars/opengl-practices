@@ -10,3 +10,8 @@ example
 # Editor
 .vscode/
 *.swp
+
+# Docs build artifacts
+docs/*.docx
+docs/generate_proposal.py
+docs/~$*
