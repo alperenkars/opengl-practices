@@ -51,6 +51,13 @@ docs/           # Proposal, report, notes
 - Late April: Progress presentation (basic scene + navigation + lighting)
 - End of semester: Final (full campus, textures, Phong shading)
 
+## External Data
+See `docs/data-sources.md` for full instructions on acquiring:
+- Campus building footprints (OpenStreetMap via overpass-turbo.eu)
+- Building facade photos (take on campus)
+- Material textures (polyhaven.com, CC0)
+- Skybox (polyhaven.com HDRIs)
+
 ## Key Constraints (from syllabus)
 - Must use C/C++ and OpenGL only — no Unity, no other rendering APIs
 - Software implementation is mandatory
