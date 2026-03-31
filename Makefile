@@ -1,9 +1,9 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -I utilities/include
-LDFLAGS = -framework OpenGL -lglfw -lGLEW
+CXXFLAGS = -std=c++17 -Wall -I/opt/homebrew/include
+LDFLAGS = -L/opt/homebrew/lib -framework OpenGL -lglfw -lGLEW
 
 TARGET = campus
-SRCS = $(wildcard src/*.cpp) utilities/InitShader.cpp
+SRCS = $(wildcard src/*.cpp)
 
 all: $(TARGET)
 

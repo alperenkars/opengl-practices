@@ -6,21 +6,16 @@ Team: Alperen Kars & Uğur Öner
 Instructor: Yücel Yemez
 
 ## Tech Stack
-- C++17, OpenGL (shader-based / core profile)
-- GLSL shaders (vertex + fragment)
-- Angel.h utilities (from Angel & Shreiner textbook)
+- C++17, OpenGL 4.1 core profile (macOS max)
+- GLSL 410 shaders (vertex + fragment)
+- GLM for math (glm::vec3, glm::mat4, etc.)
 - GLFW for windowing and input
 - GLEW for OpenGL extension loading
 
 ## Build
 ```bash
-# macOS
-g++ -std=c++17 -o campus src/main.cpp src/*.cpp utilities/InitShader.cpp \
-    -I utilities/include \
-    -framework OpenGL -lGLFW -lGLEW
-
-# Or use make:
-make
+make        # builds ./campus
+make clean  # removes binary
 ```
 
 ## Run
@@ -35,15 +30,14 @@ shaders/        # GLSL vertex and fragment shaders
 assets/
   textures/     # PNG/JPG texture files
   models/       # OBJ model files (if used)
-utilities/      # Angel.h, InitShader.cpp (from textbook)
 docs/           # Proposal, report, notes
 ```
 
 ## Conventions
-- Use Angel.h types: `vec4`, `mat4`, `Angel::mat4` for all math
+- Use GLM types: `glm::vec3`, `glm::vec4`, `glm::mat4` for all math
 - Shader files: `shaders/vshader.glsl`, `shaders/fshader.glsl`
 - All OpenGL objects (VAO, VBO, shaders) initialized in `init()`, drawn in `display()`
-- Camera uses first-person view matrix: `LookAt(eye, at, up)` from Angel.h
+- Camera uses first-person view matrix: `glm::lookAt(eye, center, up)`
 - Coordinate system: Y-up, 1 unit ≈ 1 meter
 
 ## Milestones
