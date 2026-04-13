@@ -10,6 +10,8 @@ example
 # Editor
 .vscode/
 *.swp
+*.blend
+*.blend1
 
 # Docs build artifacts
 docs/*.docx

@@ -26,6 +26,22 @@
 
 ---
 
+## 1.5 Blender Mesh Generation (blosm) + Runtime Import
+
+**What it gives you:** A single terrain + building mesh scene with UVs/baked materials, exported from Blender and loaded directly by the OpenGL app.
+
+**Workflow used:**
+1. Import OSM footprints/terrain into Blender using **blosm**
+2. Build/clean meshes and UVs in Blender
+3. Export scene as OBJ or glTF/GLB
+4. Load at runtime with **Assimp** in `src/mesh.cpp`
+
+**Attribution / license notes:**
+- OpenStreetMap data: **ODbL**
+- blosm addon is used as a data-prep tool in Blender
+
+---
+
 ## 2. Building Reference Photos & Facade Textures
 
 **What it gives you:** Visual reference for modeling + actual textures for building facades.
@@ -75,6 +91,7 @@
 | Data | Source | Needed By |
 |------|--------|-----------|
 | Building footprints (GeoJSON) | overpass-turbo.eu | Before coding starts |
+| Blender terrain/building scene | Blender + blosm (from OSM) | Mesh import phase |
 | Building facade photos | Take yourselves on campus | Before texture phase |
 | Generic material textures | polyhaven.com | During texture phase |
 | Skybox cube map | polyhaven.com + HDRI converter | During final phase |
