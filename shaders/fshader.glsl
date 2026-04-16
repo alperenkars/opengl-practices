@@ -2,11 +2,14 @@
 
 in vec3 fragPos;
 in vec3 fragNormal;
+in vec2 fragUV;
 
 uniform vec3 objectColor;
 uniform vec3 lightDir;     // direction TO the light (normalized)
 uniform vec3 lightColor;
 uniform vec3 viewPos;
+uniform sampler2D diffuseMap;
+uniform bool hasTexture;
 
 out vec4 fColor;
 
@@ -28,6 +31,11 @@ void main()
     float spec = pow(max(dot(norm, halfDir), 0.0), 64.0);
     vec3 specular = 0.4 * spec * lightColor;
 
-    vec3 result = (ambient + diffuse + specular) * objectColor;
+    vec3 baseColor = objectColor;
+    if (hasTexture) {
+        baseColor *= texture(diffuseMap, fragUV).rgb;
+    }
+
+    vec3 result = (ambient + diffuse + specular) * baseColor;
     fColor = vec4(result, 1.0);
 }

@@ -4,134 +4,62 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
 #include <iostream>
-#include <vector>
+#include <limits>
 #include <string>
+#include <vector>
 
-#include "shader.h"
 #include "camera.h"
+#include "mesh.h"
+#include "shader.h"
 
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
-const int WIDTH  = 1280;
+const int WIDTH = 1280;
 const int HEIGHT = 720;
 
 // ---------------------------------------------------------------------------
 // Globals
 // ---------------------------------------------------------------------------
-Camera camera(glm::vec3(0.0f, 1.7f, 80.0f));  // start south of campus, looking north
-GLuint shaderProgram;
-GLuint cubeVAO, cubeVBO;
-GLuint groundVAO, groundVBO;
+Camera camera(glm::vec3(0.0f, 1.7f, 8.0f));
+GLuint shaderProgram = 0;
+GLuint groundVAO = 0;
+GLuint fallbackWhiteTex = 0;
+Model campusModel;
+glm::mat4 sceneRootTransform(1.0f);
+float sceneScale = 1.0f;
+float farPlane = 2000.0f;
 
 float lastX = WIDTH / 2.0f;
 float lastY = HEIGHT / 2.0f;
-bool  firstMouse = true;
-float deltaTime  = 0.0f;
-float lastFrame  = 0.0f;
+bool firstMouse = true;
+float deltaTime = 0.0f;
+float lastFrame = 0.0f;
 
 // ---------------------------------------------------------------------------
-// Building definition
+// Geometry
 // ---------------------------------------------------------------------------
-struct Building {
-    std::string name;
-    glm::vec3 position;  // center of base
-    glm::vec3 size;      // width (X), height (Y), depth (Z)
-    glm::vec3 color;
-};
-
-// Generated from OpenStreetMap data (scripts/parse_osm.py)
-// Reference: lat=41.2058, lon=29.0740
-// X = East, Z = South (positive = south), Y = Up
-std::vector<Building> buildings = {
-    {"Auditorium",     {  28.3f, 0.0f,  -66.2f}, { 56.2f, 10.0f,  55.1f}, {0.72f, 0.68f, 0.65f}},
-    {"CASE",           {   7.0f, 0.0f,  -19.2f}, { 70.7f, 16.0f,  70.6f}, {0.70f, 0.72f, 0.68f}},
-    {"CASS",           {  81.6f, 0.0f,  -35.9f}, { 55.9f, 16.0f,  76.4f}, {0.73f, 0.71f, 0.68f}},
-    {"ELC",            { -59.1f, 0.0f,  -43.2f}, { 37.6f, 12.0f,  30.2f}, {0.74f, 0.72f, 0.69f}},
-    {"ENG",            { 130.9f, 0.0f, -141.1f}, { 96.8f, 16.0f,  91.9f}, {0.75f, 0.70f, 0.65f}},
-    {"Library",        { -57.3f, 0.0f,   -0.5f}, { 42.2f, 12.0f,  51.6f}, {0.85f, 0.80f, 0.72f}},
-    {"MED",            {  73.9f, 0.0f, -118.8f}, { 50.6f, 16.0f,  49.8f}, {0.77f, 0.73f, 0.70f}},
-    {"Rectorate",      { -93.9f, 0.0f,   53.4f}, { 22.5f, 10.0f,  61.7f}, {0.80f, 0.78f, 0.72f}},
-    {"SCI",            { 118.3f, 0.0f,  -83.5f}, { 55.0f, 16.0f,  76.0f}, {0.80f, 0.75f, 0.70f}},
-    {"SNA",            { 112.9f, 0.0f, -235.1f}, { 95.3f, 16.0f, 105.1f}, {0.76f, 0.74f, 0.71f}},
-    {"Sports",         {-124.0f, 0.0f, -178.1f}, { 65.3f, 14.0f,  73.3f}, {0.65f, 0.70f, 0.75f}},
-    {"StudentCenter",  { -50.8f, 0.0f,  109.6f}, { 69.2f, 10.0f,  68.7f}, {0.78f, 0.74f, 0.70f}},
-};
-
-// ---------------------------------------------------------------------------
-// Geometry: unit cube (centered at origin, size 1x1x1) with normals
-// ---------------------------------------------------------------------------
-// Each face: 2 triangles, 6 vertices. 6 faces = 36 vertices.
-// Per vertex: position (3) + normal (3) = 6 floats.
-
-// clang-format off
-float cubeVertices[] = {
-    // positions          // normals
-    // Front face (+Z)
-    -0.5f, 0.0f,  0.5f,   0, 0, 1,
-     0.5f, 0.0f,  0.5f,   0, 0, 1,
-     0.5f, 1.0f,  0.5f,   0, 0, 1,
-     0.5f, 1.0f,  0.5f,   0, 0, 1,
-    -0.5f, 1.0f,  0.5f,   0, 0, 1,
-    -0.5f, 0.0f,  0.5f,   0, 0, 1,
-    // Back face (-Z)
-     0.5f, 0.0f, -0.5f,   0, 0,-1,
-    -0.5f, 0.0f, -0.5f,   0, 0,-1,
-    -0.5f, 1.0f, -0.5f,   0, 0,-1,
-    -0.5f, 1.0f, -0.5f,   0, 0,-1,
-     0.5f, 1.0f, -0.5f,   0, 0,-1,
-     0.5f, 0.0f, -0.5f,   0, 0,-1,
-    // Left face (-X)
-    -0.5f, 0.0f, -0.5f,  -1, 0, 0,
-    -0.5f, 0.0f,  0.5f,  -1, 0, 0,
-    -0.5f, 1.0f,  0.5f,  -1, 0, 0,
-    -0.5f, 1.0f,  0.5f,  -1, 0, 0,
-    -0.5f, 1.0f, -0.5f,  -1, 0, 0,
-    -0.5f, 0.0f, -0.5f,  -1, 0, 0,
-    // Right face (+X)
-     0.5f, 0.0f,  0.5f,   1, 0, 0,
-     0.5f, 0.0f, -0.5f,   1, 0, 0,
-     0.5f, 1.0f, -0.5f,   1, 0, 0,
-     0.5f, 1.0f, -0.5f,   1, 0, 0,
-     0.5f, 1.0f,  0.5f,   1, 0, 0,
-     0.5f, 0.0f,  0.5f,   1, 0, 0,
-    // Top face (+Y)
-    -0.5f, 1.0f,  0.5f,   0, 1, 0,
-     0.5f, 1.0f,  0.5f,   0, 1, 0,
-     0.5f, 1.0f, -0.5f,   0, 1, 0,
-     0.5f, 1.0f, -0.5f,   0, 1, 0,
-    -0.5f, 1.0f, -0.5f,   0, 1, 0,
-    -0.5f, 1.0f,  0.5f,   0, 1, 0,
-    // Bottom face (-Y)
-    -0.5f, 0.0f, -0.5f,   0,-1, 0,
-     0.5f, 0.0f, -0.5f,   0,-1, 0,
-     0.5f, 0.0f,  0.5f,   0,-1, 0,
-     0.5f, 0.0f,  0.5f,   0,-1, 0,
-    -0.5f, 0.0f,  0.5f,   0,-1, 0,
-    -0.5f, 0.0f, -0.5f,   0,-1, 0,
-};
-// clang-format on
-
-// Ground plane: large quad at y = 0
 float groundVertices[] = {
-    // positions              // normals
-    -500.0f, 0.0f,  500.0f,   0, 1, 0,
-     500.0f, 0.0f,  500.0f,   0, 1, 0,
-     500.0f, 0.0f, -500.0f,   0, 1, 0,
-     500.0f, 0.0f, -500.0f,   0, 1, 0,
-    -500.0f, 0.0f, -500.0f,   0, 1, 0,
-    -500.0f, 0.0f,  500.0f,   0, 1, 0,
+    // position               // normal      // uv
+    -500.0f, 0.0f,  500.0f,   0, 1, 0,      0, 0,
+     500.0f, 0.0f,  500.0f,   0, 1, 0,      1, 0,
+     500.0f, 0.0f, -500.0f,   0, 1, 0,      1, 1,
+     500.0f, 0.0f, -500.0f,   0, 1, 0,      1, 1,
+    -500.0f, 0.0f, -500.0f,   0, 1, 0,      0, 1,
+    -500.0f, 0.0f,  500.0f,   0, 1, 0,      0, 0,
 };
 
 // ---------------------------------------------------------------------------
 // Callbacks
 // ---------------------------------------------------------------------------
-
 void mouseCallback(GLFWwindow* /*window*/, double xpos, double ypos)
 {
-    float xf = static_cast<float>(xpos);
-    float yf = static_cast<float>(ypos);
+    const float xf = static_cast<float>(xpos);
+    const float yf = static_cast<float>(ypos);
 
     if (firstMouse) {
         lastX = xf;
@@ -139,7 +67,7 @@ void mouseCallback(GLFWwindow* /*window*/, double xpos, double ypos)
         firstMouse = false;
     }
 
-    camera.processMouse(xf - lastX, lastY - yf);  // y inverted
+    camera.processMouse(xf - lastX, lastY - yf);
     lastX = xf;
     lastY = yf;
 }
@@ -150,12 +78,12 @@ void framebufferSizeCallback(GLFWwindow* /*window*/, int width, int height)
 }
 
 // ---------------------------------------------------------------------------
-// Setup helpers
+// Helpers
 // ---------------------------------------------------------------------------
-
 static GLuint createVAO(const float* data, size_t size)
 {
-    GLuint vao, vbo;
+    GLuint vao = 0;
+    GLuint vbo = 0;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
 
@@ -163,102 +91,447 @@ static GLuint createVAO(const float* data, size_t size)
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, size, data, GL_STATIC_DRAW);
 
-    // position
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-    // normal
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
 
     glBindVertexArray(0);
     return vao;
 }
 
-static void setUniform(GLuint prog, const char* name, const glm::mat4& m) {
+static void setUniform(GLuint prog, const char* name, const glm::mat4& m)
+{
     glUniformMatrix4fv(glGetUniformLocation(prog, name), 1, GL_FALSE, glm::value_ptr(m));
 }
 
-static void setUniform(GLuint prog, const char* name, const glm::vec3& v) {
+static void setUniform(GLuint prog, const char* name, const glm::vec3& v)
+{
     glUniform3fv(glGetUniformLocation(prog, name), 1, glm::value_ptr(v));
+}
+
+static void setUniform(GLuint prog, const char* name, int value)
+{
+    glUniform1i(glGetUniformLocation(prog, name), value);
+}
+
+static std::string resolveScenePath()
+{
+    namespace fs = std::filesystem;
+    const std::vector<std::string> candidates = {
+        "assets/models/Campus.glb",
+        "assets/models/Campus.gltf",
+        "assets/models/Campus.obj",
+        "assets/models/campus.glb",
+        "assets/models/campus.gltf",
+        "assets/models/campus.obj",
+        "assets/models/object/campus.glb",
+        "assets/models/object/3_7_2026.glb",
+    };
+
+    for (const auto& p : candidates) {
+        if (fs::exists(p)) {
+            return p;
+        }
+    }
+    return "";
+}
+
+static glm::vec3 sceneExtent(const Model& m)
+{
+    return m.bboxMax - m.bboxMin;
+}
+
+static GLuint createFallbackWhiteTexture()
+{
+    const unsigned char pixel[3] = {255, 255, 255};
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, pixel);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return tex;
+}
+
+static void orientCameraToward(const glm::vec3& target)
+{
+    const glm::vec3 delta = target - camera.position;
+    if (glm::length(delta) < 1e-4f) {
+        camera.yaw = -90.0f;
+        camera.pitch = 0.0f;
+        return;
+    }
+    const glm::vec3 dir = glm::normalize(delta);
+    camera.yaw = glm::degrees(std::atan2(dir.z, dir.x));
+    camera.pitch = glm::degrees(std::asin(glm::clamp(dir.y, -1.0f, 1.0f)));
+}
+
+static bool sampleWalkSurfaceHeight(float worldX, float worldZ, float maxProbeY, float& outY,
+                                    float preferredY = std::numeric_limits<float>::quiet_NaN())
+{
+    if (campusModel.walkSurface.empty()) {
+        return false;
+    }
+
+    const float x = worldX / sceneScale;
+    const float z = worldZ / sceneScale;
+    const float maxY = maxProbeY / sceneScale;
+
+    bool found = false;
+    float bestY = -1e9f;
+    float bestDiff = std::numeric_limits<float>::max();
+    const float eps = 1e-5f;
+
+    for (const auto& tri : campusModel.walkSurface) {
+        const float minX = std::min({tri.a.x, tri.b.x, tri.c.x}) - eps;
+        const float maxX = std::max({tri.a.x, tri.b.x, tri.c.x}) + eps;
+        const float minZ = std::min({tri.a.z, tri.b.z, tri.c.z}) - eps;
+        const float maxZ = std::max({tri.a.z, tri.b.z, tri.c.z}) + eps;
+        if (x < minX || x > maxX || z < minZ || z > maxZ) {
+            continue;
+        }
+
+        const glm::vec2 a(tri.a.x, tri.a.z);
+        const glm::vec2 b(tri.b.x, tri.b.z);
+        const glm::vec2 c(tri.c.x, tri.c.z);
+        const glm::vec2 p(x, z);
+
+        const glm::vec2 v0 = b - a;
+        const glm::vec2 v1 = c - a;
+        const glm::vec2 v2 = p - a;
+        const float det = v0.x * v1.y - v1.x * v0.y;
+        if (std::abs(det) < eps) {
+            continue;
+        }
+
+        const float invDet = 1.0f / det;
+        const float u = (v2.x * v1.y - v1.x * v2.y) * invDet;
+        const float v = (v0.x * v2.y - v2.x * v0.y) * invDet;
+        const float w = 1.0f - u - v;
+        if (u < -eps || v < -eps || w < -eps) {
+            continue;
+        }
+
+        const float y = u * tri.b.y + v * tri.c.y + w * tri.a.y;
+        if (y <= maxY + eps) {
+            if (std::isnan(preferredY)) {
+                if (y > bestY) {
+                    bestY = y;
+                    found = true;
+                }
+            } else {
+                const float yWorld = y * sceneScale;
+                const float diff = std::abs(yWorld - preferredY);
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestY = y;
+                    found = true;
+                }
+            }
+        }
+    }
+
+    if (found) {
+        outY = bestY * sceneScale;
+    }
+    return found;
+}
+
+static bool collidesWithBuilding(float worldX, float worldY, float worldZ)
+{
+    const float x = worldX / sceneScale;
+    const float y = worldY / sceneScale;
+    const float z = worldZ / sceneScale;
+    const float radius = 0.6f / sceneScale;  // ~60 cm body radius
+
+    for (const auto& o : campusModel.obstacles) {
+        if (x < o.minXZ.x - radius || x > o.maxXZ.x + radius) continue;
+        if (z < o.minXZ.y - radius || z > o.maxXZ.y + radius) continue;
+        if (y < o.minY - 2.0f || y > o.maxY + 2.0f) continue;
+        return true;
+    }
+    return false;
+}
+
+static bool projectToWalkable(const glm::vec3& candidate, glm::vec3& corrected)
+{
+    float terrainY = 0.0f;
+    if (!sampleWalkSurfaceHeight(candidate.x, candidate.z, candidate.y + 5.0f, terrainY, candidate.y - 1.7f)) {
+        return false;
+    }
+
+    corrected = glm::vec3(candidate.x, terrainY + 1.7f, candidate.z);
+    const float deltaY = corrected.y - candidate.y;
+    if (deltaY > 1.2f || deltaY < -3.5f) {
+        return false;
+    }
+    if (collidesWithBuilding(corrected.x, corrected.y, corrected.z)) {
+        return false;
+    }
+    return true;
+}
+
+static bool findNearbyWalkable(const glm::vec3& origin, glm::vec3& outPos)
+{
+    if (projectToWalkable(origin, outPos)) {
+        return true;
+    }
+
+    for (int r = 1; r <= 12; ++r) {
+        const float radius = 0.75f * static_cast<float>(r);
+        const int samples = 16 + r * 4;
+        for (int i = 0; i < samples; ++i) {
+            const float a = (2.0f * glm::pi<float>() * static_cast<float>(i)) / static_cast<float>(samples);
+            const glm::vec3 candidate = origin + glm::vec3(std::cos(a) * radius, 0.0f, std::sin(a) * radius);
+            if (projectToWalkable(candidate, outPos)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool findGuaranteedSpawn(glm::vec3& outWorldPos)
+{
+    if (campusModel.walkSurface.empty()) return false;
+
+    const glm::vec3 sceneCenterLocal = (campusModel.bboxMin + campusModel.bboxMax) * 0.5f;
+    const float searchStep = 15.0f;
+    const int rings = 24;
+    const float probeY = (campusModel.bboxMin.y + 30.0f) * sceneScale;
+
+    float h = 0.0f;
+    if (sampleWalkSurfaceHeight(sceneCenterLocal.x * sceneScale, sceneCenterLocal.z * sceneScale, probeY, h)) {
+        outWorldPos = glm::vec3(sceneCenterLocal.x * sceneScale, h, sceneCenterLocal.z * sceneScale);
+        return true;
+    }
+
+    for (int r = 1; r <= rings; ++r) {
+        const float radius = r * searchStep;
+        const int samples = 12 + r * 4;
+        for (int i = 0; i < samples; ++i) {
+            const float a = (2.0f * glm::pi<float>() * static_cast<float>(i)) / static_cast<float>(samples);
+            const float x = (sceneCenterLocal.x + std::cos(a) * radius) * sceneScale;
+            const float z = (sceneCenterLocal.z + std::sin(a) * radius) * sceneScale;
+            if (sampleWalkSurfaceHeight(x, z, probeY, h)) {
+                outWorldPos = glm::vec3(x, h, z);
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
 // Init & Display
 // ---------------------------------------------------------------------------
-
 void init()
 {
     shaderProgram = loadShaders("shaders/vshader.glsl", "shaders/fshader.glsl");
-    cubeVAO   = createVAO(cubeVertices,   sizeof(cubeVertices));
     groundVAO = createVAO(groundVertices, sizeof(groundVertices));
 
+    const std::string scenePath = resolveScenePath();
+    if (scenePath.empty()) {
+        std::cerr << "No scene file found under assets/models/ (*.obj, *.glb, *.gltf)." << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    campusModel = loadModel(scenePath);
+    if (campusModel.meshes.empty()) {
+        std::cerr << "Scene loaded with zero meshes: " << scenePath << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    const glm::vec3 extent = sceneExtent(campusModel);
+    const float maxExtent = std::max(extent.x, std::max(extent.y, extent.z));
+    if (maxExtent > 2000.0f) {
+        sceneRootTransform = glm::scale(glm::mat4(1.0f), glm::vec3(0.01f));
+        sceneScale = 0.01f;
+        std::cout << "Applied root scale 0.01 (centimeters -> meters assumption)." << std::endl;
+    }
+
+    const glm::vec3 sceneCenter = (campusModel.bboxMin + campusModel.bboxMax) * 0.5f;
+    glm::vec3 spawnPoint(sceneCenter.x, campusModel.bboxMin.y, sceneCenter.z);
+    if (!findGuaranteedSpawn(spawnPoint)) {
+        spawnPoint = glm::vec3(sceneCenter.x, campusModel.bboxMin.y, sceneCenter.z);
+    }
+
+    camera.position = glm::vec3(spawnPoint.x, spawnPoint.y + 1.7f, spawnPoint.z);
+    camera.walkHeight = camera.position.y;
+    orientCameraToward(glm::vec3(sceneCenter.x * sceneScale, camera.position.y, sceneCenter.z * sceneScale));
+    farPlane = std::max(2000.0f, maxExtent * 4.0f);
+
+    float terrainY = 0.0f;
+    if (sampleWalkSurfaceHeight(camera.position.x, camera.position.z, camera.position.y + 5.0f, terrainY)) {
+        camera.walkHeight = terrainY + 1.7f;
+        camera.position.y = camera.walkHeight;
+    }
+
+    if (collidesWithBuilding(camera.position.x, camera.position.y, camera.position.z)) {
+        const glm::vec3 center = glm::vec3(sceneCenter.x * sceneScale, 0.0f, sceneCenter.z * sceneScale);
+        bool relocated = false;
+        for (int r = 1; r <= 20 && !relocated; ++r) {
+            const float radius = r * 5.0f;
+            for (int i = 0; i < 24; ++i) {
+                const float a = (2.0f * glm::pi<float>() * static_cast<float>(i)) / 24.0f;
+                const float x = center.x + std::cos(a) * radius;
+                const float z = center.z + std::sin(a) * radius;
+                float h = 0.0f;
+                if (!sampleWalkSurfaceHeight(x, z, camera.position.y + 5.0f, h)) continue;
+                const float y = h + 1.7f;
+                if (!collidesWithBuilding(x, y, z)) {
+                    camera.position = glm::vec3(x, y, z);
+                    camera.walkHeight = y;
+                    relocated = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    std::cout << "Loaded scene: " << scenePath << std::endl;
+    std::cout << "Scene bbox min: (" << campusModel.bboxMin.x << ", " << campusModel.bboxMin.y << ", " << campusModel.bboxMin.z << ")" << std::endl;
+    std::cout << "Scene bbox max: (" << campusModel.bboxMax.x << ", " << campusModel.bboxMax.y << ", " << campusModel.bboxMax.z << ")" << std::endl;
+    std::cout << "Scene extent: (" << extent.x << ", " << extent.y << ", " << extent.z << ")" << std::endl;
+    std::cout << "Scene has terrain heuristic: " << (campusModel.sceneHasTerrain ? "yes" : "no") << std::endl;
+    std::cout << "Camera start: (" << camera.position.x << ", " << camera.position.y << ", " << camera.position.z << ")" << std::endl;
+    std::cout << "Camera yaw/pitch: (" << camera.yaw << ", " << camera.pitch << ")" << std::endl;
+
     glEnable(GL_DEPTH_TEST);
-    glClearColor(0.53f, 0.81f, 0.92f, 1.0f);  // sky blue
+    glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
+    fallbackWhiteTex = createFallbackWhiteTexture();
+
+    glUseProgram(shaderProgram);
+    setUniform(shaderProgram, "diffuseMap", 0);
+    setUniform(shaderProgram, "hasTexture", 0);
 }
 
 void display()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(shaderProgram);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, fallbackWhiteTex);
 
-    // Camera matrices
-    glm::mat4 view = camera.viewMatrix();
-    glm::mat4 projection = glm::perspective(glm::radians(60.0f),
-        (float)WIDTH / (float)HEIGHT, 0.1f, 1000.0f);
-
+    const glm::mat4 view = camera.viewMatrix();
+    const glm::mat4 projection = glm::perspective(glm::radians(60.0f),
+                                                  static_cast<float>(WIDTH) / static_cast<float>(HEIGHT),
+                                                  0.1f, farPlane);
     setUniform(shaderProgram, "view", view);
     setUniform(shaderProgram, "projection", projection);
     setUniform(shaderProgram, "viewPos", camera.position);
-
-    // Sun light — coming from upper-right
-    glm::vec3 lightDir = glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f));
-    setUniform(shaderProgram, "lightDir",   lightDir);
+    setUniform(shaderProgram, "lightDir", glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f)));
     setUniform(shaderProgram, "lightColor", glm::vec3(1.0f, 0.98f, 0.95f));
 
-    // Draw ground
-    {
-        glm::mat4 model(1.0f);
-        setUniform(shaderProgram, "model", model);
-        setUniform(shaderProgram, "objectColor", glm::vec3(0.30f, 0.55f, 0.25f));  // grass green
+    if (!campusModel.sceneHasTerrain) {
+        setUniform(shaderProgram, "model", glm::mat4(1.0f));
+        setUniform(shaderProgram, "hasTexture", 0);
+        setUniform(shaderProgram, "objectColor", glm::vec3(0.30f, 0.55f, 0.25f));
         glBindVertexArray(groundVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
-    // Draw buildings
-    glBindVertexArray(cubeVAO);
-    for (const auto& b : buildings) {
-        glm::mat4 model(1.0f);
-        model = glm::translate(model, b.position);
-        model = glm::scale(model, b.size);
-
-        setUniform(shaderProgram, "model", model);
-        setUniform(shaderProgram, "objectColor", b.color);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
+    setUniform(shaderProgram, "model", sceneRootTransform);
+    for (const auto& mesh : campusModel.meshes) {
+        if (mesh.diffuseTex != 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, mesh.diffuseTex);
+            setUniform(shaderProgram, "hasTexture", 1);
+        } else {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, fallbackWhiteTex);
+            setUniform(shaderProgram, "hasTexture", 0);
+        }
+        setUniform(shaderProgram, "objectColor", mesh.baseColor);
+        glBindVertexArray(mesh.vao);
+        glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
     }
+    glBindVertexArray(0);
 }
 
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
-
 void processInput(GLFWwindow* window)
 {
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, true);
+    }
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) camera.processKeyboard(0, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) camera.processKeyboard(1, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) camera.processKeyboard(2, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) camera.processKeyboard(3, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS) {
+        camera.speed = 35.0f;
+    } else if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+        camera.speed = 15.0f;
+    } else {
+        camera.speed = 5.0f;
+    }
 
-    // Sprint with Shift
-    camera.speed = (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) ? 15.0f : 5.0f;
+    const glm::vec3 prevPos = camera.position;
+    glm::vec3 move(0.0f);
+
+    glm::vec3 flatFront = glm::vec3(camera.front().x, 0.0f, camera.front().z);
+    if (glm::length(flatFront) > 1e-5f) {
+        flatFront = glm::normalize(flatFront);
+    }
+    glm::vec3 flatRight = glm::vec3(camera.right().x, 0.0f, camera.right().z);
+    if (glm::length(flatRight) > 1e-5f) {
+        flatRight = glm::normalize(flatRight);
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) move += flatFront;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) move -= flatFront;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) move -= flatRight;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) move += flatRight;
+
+    glm::vec3 resolvedPos = prevPos;
+    if (glm::length(move) > 1e-5f) {
+        move = glm::normalize(move) * (camera.speed * deltaTime);
+        glm::vec3 corrected;
+
+        const glm::vec3 fullTarget = prevPos + move;
+        if (projectToWalkable(fullTarget, corrected)) {
+            resolvedPos = corrected;
+        } else {
+            bool moved = false;
+            const glm::vec3 xTarget = prevPos + glm::vec3(move.x, 0.0f, 0.0f);
+            if (projectToWalkable(xTarget, corrected)) {
+                resolvedPos = corrected;
+                moved = true;
+            }
+
+            const glm::vec3 zTarget = prevPos + glm::vec3(0.0f, 0.0f, move.z);
+            if (projectToWalkable(zTarget, corrected)) {
+                resolvedPos = corrected;
+                moved = true;
+            }
+
+            if (!moved) {
+                glm::vec3 unstuck;
+                if (findNearbyWalkable(prevPos, unstuck)) {
+                    resolvedPos = unstuck;
+                }
+            }
+        }
+    } else {
+        glm::vec3 corrected;
+        if (projectToWalkable(prevPos, corrected)) {
+            resolvedPos = corrected;
+        }
+    }
+
+    camera.position = resolvedPos;
+    camera.walkHeight = camera.position.y;
 }
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-
 int main()
 {
     if (!glfwInit()) {
@@ -279,7 +552,6 @@ int main()
     }
     glfwMakeContextCurrent(window);
 
-    // Capture mouse
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     glfwSetCursorPosCallback(window, mouseCallback);
     glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
@@ -287,16 +559,17 @@ int main()
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK) {
         std::cerr << "Failed to init GLEW" << std::endl;
+        glfwTerminate();
         return EXIT_FAILURE;
     }
 
     std::cout << "OpenGL " << glGetString(GL_VERSION) << std::endl;
-    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, ESC = quit" << std::endl;
+    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, ESC = quit" << std::endl;
 
     init();
 
     while (!glfwWindowShouldClose(window)) {
-        float currentFrame = static_cast<float>(glfwGetTime());
+        const float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 

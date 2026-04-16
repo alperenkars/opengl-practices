@@ -36,7 +36,8 @@ docs/           # Proposal, report, notes
 ## Conventions
 - Use GLM types: `glm::vec3`, `glm::vec4`, `glm::mat4` for all math
 - Shader files: `shaders/vshader.glsl`, `shaders/fshader.glsl`
-- All OpenGL objects (VAO, VBO, shaders) initialized in `init()`, drawn in `display()`
+- Campus scene is imported from exported meshes (OBJ/glTF/GLB) using Assimp; avoid adding new hardcoded primitive-building layouts in `main.cpp`
+- All OpenGL objects (VAO, VBO/EBO, shaders, textures) initialized in `init()`, drawn in `display()`
 - Camera uses first-person view matrix: `glm::lookAt(eye, center, up)`
 - Coordinate system: Y-up, 1 unit ≈ 1 meter
 

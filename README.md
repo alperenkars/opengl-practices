@@ -11,13 +11,15 @@ An interactive 3D virtual tour of Koç University campus built with C++ and Open
 |-----|--------|
 | W/A/S/D | Move forward/left/back/right |
 | Mouse | Look around |
+| Left Shift | Sprint |
+| Left Alt | Turbo sprint |
 | ESC | Quit |
 
 ## Build & Run
 
 ```bash
 # Install dependencies (macOS)
-brew install glfw glew
+brew install glfw glew assimp
 
 # Build
 make
@@ -35,3 +37,9 @@ assets/       Textures and 3D models
 utilities/    Angel.h OpenGL helper library
 docs/         Proposal and reports
 ```
+
+## Runtime Asset Pipeline
+
+- Campus/building scenes are imported at runtime from exported mesh files (OBJ/glTF/GLB) via Assimp.
+- Diffuse textures are loaded at runtime with stb_image.
+- Lighting stays in our GLSL pipeline (ambient + diffuse + Blinn-Phong specular) and textures modulate the lit result.

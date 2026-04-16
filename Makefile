@@ -1,6 +1,6 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -I/opt/homebrew/include
-LDFLAGS = -L/opt/homebrew/lib -framework OpenGL -lglfw -lGLEW
+LDFLAGS = -L/opt/homebrew/lib -framework OpenGL -lglfw -lGLEW -lassimp
 
 TARGET = campus
 SRCS = $(wildcard src/*.cpp)
