@@ -41,6 +41,16 @@ bool isBuildingName(const std::string& meshName)
     return n.find("building") != std::string::npos;
 }
 
+bool shouldSkipRenderableMesh(const std::string& meshName)
+{
+    const std::string n = toLower(meshName);
+    return n.find("envelope") != std::string::npos ||
+           n.find("boundingbox") != std::string::npos ||
+           n.find("bounding_box") != std::string::npos ||
+           n.find("bounding box") != std::string::npos ||
+           n.find("bbox") != std::string::npos;
+}
+
 // Hash a building index into a deterministic facade color from a natural palette
 glm::vec3 buildingWallColor(unsigned int seed)
 {
@@ -294,6 +304,9 @@ void processNode(const aiScene* scene,
 
     for (unsigned int i = 0; i < node->mNumMeshes; ++i) {
         aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
+        if (shouldSkipRenderableMesh(mesh->mName.C_Str())) {
+            continue;
+        }
         model.meshes.push_back(buildMesh(scene, mesh, modelDir, worldTransform, model, loadedTextures, bboxMin, bboxMax));
     }
 
