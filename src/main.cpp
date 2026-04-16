@@ -404,7 +404,8 @@ void init()
     std::cout << "Camera yaw/pitch: (" << camera.yaw << ", " << camera.pitch << ")" << std::endl;
 
     glEnable(GL_DEPTH_TEST);
-    glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
+    // Pre-linearize the sky color so it matches the gamma-corrected scene output
+    glClearColor(powf(0.53f, 2.2f), powf(0.81f, 2.2f), powf(0.92f, 2.2f), 1.0f);
     fallbackWhiteTex = createFallbackWhiteTexture();
 
     glUseProgram(shaderProgram);
@@ -458,20 +459,47 @@ void display()
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
+static bool flyKeyWasPressed = false;
+
 void processInput(GLFWwindow* window)
 {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, true);
     }
 
+    // Toggle fly mode with F
+    const bool flyKeyDown = glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS;
+    if (flyKeyDown && !flyKeyWasPressed) {
+        camera.flyMode = !camera.flyMode;
+        std::cout << (camera.flyMode ? "Fly mode ON" : "Fly mode OFF") << std::endl;
+    }
+    flyKeyWasPressed = flyKeyDown;
+
     if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS) {
-        camera.speed = 35.0f;
+        camera.speed = camera.flyMode ? 80.0f : 35.0f;
     } else if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-        camera.speed = 15.0f;
+        camera.speed = camera.flyMode ? 40.0f : 15.0f;
     } else {
-        camera.speed = 5.0f;
+        camera.speed = camera.flyMode ? 20.0f : 5.0f;
     }
 
+    if (camera.flyMode) {
+        // Fly mode: free movement along camera direction, no collision
+        glm::vec3 move(0.0f);
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) move += camera.front();
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) move -= camera.front();
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) move -= camera.right();
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) move += camera.right();
+        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) move.y += 1.0f;
+        if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS)     move.y -= 1.0f;
+
+        if (glm::length(move) > 1e-5f) {
+            camera.position += glm::normalize(move) * (camera.speed * deltaTime);
+        }
+        return;
+    }
+
+    // Walk mode: terrain following + collision
     const glm::vec3 prevPos = camera.position;
     glm::vec3 move(0.0f);
 
@@ -564,7 +592,7 @@ int main()
     }
 
     std::cout << "OpenGL " << glGetString(GL_VERSION) << std::endl;
-    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, ESC = quit" << std::endl;
+    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, F = fly mode, Space/C = up/down (fly), ESC = quit" << std::endl;
 
     init();
 

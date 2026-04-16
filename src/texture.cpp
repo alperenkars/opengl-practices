@@ -29,6 +29,13 @@ GLuint createTexture2D(unsigned char* pixels, int width, int height, int channel
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+    // Anisotropic filtering — critical for ground textures viewed at glancing angles
+    GLfloat maxAniso = 0.0f;
+    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAniso);
+    if (maxAniso > 1.0f) {
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, maxAniso);
+    }
+
     glBindTexture(GL_TEXTURE_2D, 0);
     return tex;
 }
