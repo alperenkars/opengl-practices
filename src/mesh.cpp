@@ -41,6 +41,81 @@ bool isBuildingName(const std::string& meshName)
     return n.find("building") != std::string::npos;
 }
 
+// Hash a building index into a deterministic facade color from a natural palette
+glm::vec3 buildingWallColor(unsigned int seed)
+{
+    // Palette of realistic facade colors (concrete, stone, plaster)
+    static const glm::vec3 palette[] = {
+        {0.85f, 0.82f, 0.76f},  // warm cream
+        {0.78f, 0.75f, 0.70f},  // warm grey
+        {0.88f, 0.84f, 0.75f},  // sandy beige
+        {0.92f, 0.89f, 0.83f},  // off-white
+        {0.75f, 0.72f, 0.68f},  // concrete grey
+        {0.82f, 0.78f, 0.70f},  // tan stone
+        {0.80f, 0.77f, 0.73f},  // light grey
+        {0.86f, 0.80f, 0.72f},  // sandstone
+    };
+    return palette[seed % 8];
+}
+
+glm::vec3 buildingRoofColor(unsigned int seed)
+{
+    static const glm::vec3 palette[] = {
+        {0.40f, 0.38f, 0.36f},  // dark grey
+        {0.45f, 0.40f, 0.35f},  // brown-grey
+        {0.50f, 0.47f, 0.43f},  // medium grey
+        {0.42f, 0.36f, 0.32f},  // dark brown
+    };
+    return palette[seed % 4];
+}
+
+// Extract building index from names like "map.osm_buildings.017-0"
+unsigned int buildingIndex(const std::string& name)
+{
+    auto pos = name.find("buildings");
+    if (pos == std::string::npos) return 0;
+    pos += 9; // skip "buildings"
+    if (pos < name.size() && name[pos] == '.') pos++;
+    unsigned int idx = 0;
+    while (pos < name.size() && name[pos] >= '0' && name[pos] <= '9') {
+        idx = idx * 10 + (name[pos] - '0');
+        pos++;
+    }
+    return idx;
+}
+
+bool isBuildingRoof(const std::string& meshName)
+{
+    return meshName.size() >= 2 && meshName.substr(meshName.size() - 2) == "-1";
+}
+
+glm::vec3 assignColor(const std::string& meshName)
+{
+    const std::string n = toLower(meshName);
+
+    if (n.find("building") != std::string::npos) {
+        unsigned int idx = buildingIndex(n);
+        if (isBuildingRoof(n)) {
+            return buildingRoofColor(idx);
+        }
+        return buildingWallColor(idx);
+    }
+    if (n.find("vegetation") != std::string::npos) {
+        return glm::vec3(0.30f, 0.50f, 0.25f);  // natural green
+    }
+    if (n.find("road") != std::string::npos) {
+        return glm::vec3(0.35f, 0.35f, 0.37f);  // asphalt
+    }
+    if (n.find("pedestrian") != std::string::npos || n.find("path") != std::string::npos || n.find("footway") != std::string::npos) {
+        return glm::vec3(0.72f, 0.70f, 0.65f);  // light concrete
+    }
+    if (n.find("envelope") != std::string::npos) {
+        return glm::vec3(0.45f, 0.42f, 0.35f);  // earthy brown (visible at horizon)
+    }
+
+    return glm::vec3(1.0f);  // default white (let texture show through)
+}
+
 Mesh buildMesh(const aiScene* scene,
                const aiMesh* ai_mesh,
                const std::filesystem::path& modelDir,
@@ -141,13 +216,23 @@ Mesh buildMesh(const aiScene* scene,
 
     mesh.indexCount = static_cast<GLsizei>(indices.size());
 
+    // Assign a natural color based on mesh type (buildings, roads, etc.)
+    const std::string meshName = ai_mesh->mName.C_Str();
+    mesh.baseColor = assignColor(meshName);
+
     if (ai_mesh->mMaterialIndex < scene->mNumMaterials) {
         aiMaterial* mat = scene->mMaterials[ai_mesh->mMaterialIndex];
 
+        // Only override with material color if it's not the default white
         aiColor3D color(1.0f, 1.0f, 1.0f);
         if (mat->Get(AI_MATKEY_BASE_COLOR, color) == AI_SUCCESS ||
             mat->Get(AI_MATKEY_COLOR_DIFFUSE, color) == AI_SUCCESS) {
-            mesh.baseColor = glm::vec3(color.r, color.g, color.b);
+            const bool isDefault = (std::abs(color.r - 1.0f) < 0.01f &&
+                                    std::abs(color.g - 1.0f) < 0.01f &&
+                                    std::abs(color.b - 1.0f) < 0.01f);
+            if (!isDefault) {
+                mesh.baseColor = glm::vec3(color.r, color.g, color.b);
+            }
         }
 
         aiString texPath;
@@ -227,8 +312,7 @@ Model loadModel(const std::string& path)
     const aiScene* scene = importer.ReadFile(path,
         aiProcess_Triangulate |
         aiProcess_GenSmoothNormals |
-        aiProcess_JoinIdenticalVertices |
-        aiProcess_FlipUVs);
+        aiProcess_JoinIdenticalVertices);
 
     if (!scene || !scene->mRootNode || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE)) {
         std::cerr << "Assimp load failed for " << path << ": " << importer.GetErrorString() << std::endl;

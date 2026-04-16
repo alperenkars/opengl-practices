@@ -11,6 +11,7 @@ public:
     float speed  = 5.0f;    // meters per second
     float sensitivity = 0.1f;
     float walkHeight;        // fixed Y for walking mode
+    bool flyMode = false;
 
     Camera(glm::vec3 pos = glm::vec3(0.0f, 1.7f, 0.0f))
         : position(pos), walkHeight(pos.y) {}
