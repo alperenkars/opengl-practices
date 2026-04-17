@@ -15,5 +15,6 @@ example
 
 # Docs build artifacts
 docs/*.docx
+!docs/progress_report.docx
 docs/generate_proposal.py
 docs/~$*
