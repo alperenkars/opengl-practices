@@ -117,6 +117,35 @@ static void setUniform(GLuint prog, const char* name, int value)
     glUniform1i(glGetUniformLocation(prog, name), value);
 }
 
+struct LandmarkView {
+    const char* name;
+    glm::vec3 position;
+    float yaw;
+    float pitch;
+};
+
+static const LandmarkView LANDMARKS[] = {
+    {"Rectorate", glm::vec3(-2.0f, 112.0f, 188.0f), -82.0f, -13.0f},
+    {"Library", glm::vec3(-116.0f, 116.0f, 102.0f), -28.0f, -10.0f},
+    {"Student Center", glm::vec3(72.0f, 112.0f, -62.0f), -142.0f, -11.0f},
+};
+
+static void jumpToLandmark(int index)
+{
+    if (index < 0 || index >= static_cast<int>(sizeof(LANDMARKS) / sizeof(LANDMARKS[0]))) {
+        return;
+    }
+
+    const LandmarkView& view = LANDMARKS[index];
+    camera.flyMode = true;
+    camera.position = view.position * sceneScale;
+    camera.yaw = view.yaw;
+    camera.pitch = view.pitch;
+    camera.walkHeight = camera.position.y;
+    firstMouse = true;
+    std::cout << "Landmark view: " << view.name << std::endl;
+}
+
 static std::string resolveScenePath()
 {
     namespace fs = std::filesystem;
@@ -405,12 +434,13 @@ void init()
 
     glEnable(GL_DEPTH_TEST);
     // Pre-linearize the sky color so it matches the gamma-corrected scene output
-    glClearColor(powf(0.53f, 2.2f), powf(0.81f, 2.2f), powf(0.92f, 2.2f), 1.0f);
+    glClearColor(powf(0.60f, 2.2f), powf(0.78f, 2.2f), powf(0.88f, 2.2f), 1.0f);
     fallbackWhiteTex = createFallbackWhiteTexture();
 
     glUseProgram(shaderProgram);
     setUniform(shaderProgram, "diffuseMap", 0);
     setUniform(shaderProgram, "hasTexture", 0);
+    setUniform(shaderProgram, "materialMode", 0);
 }
 
 void display()
@@ -427,12 +457,13 @@ void display()
     setUniform(shaderProgram, "view", view);
     setUniform(shaderProgram, "projection", projection);
     setUniform(shaderProgram, "viewPos", camera.position);
-    setUniform(shaderProgram, "lightDir", glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f)));
-    setUniform(shaderProgram, "lightColor", glm::vec3(1.0f, 0.98f, 0.95f));
+    setUniform(shaderProgram, "lightDir", glm::normalize(glm::vec3(-0.35f, 0.85f, 0.45f)));
+    setUniform(shaderProgram, "lightColor", glm::vec3(0.92f, 0.90f, 0.84f));
 
     if (!campusModel.sceneHasTerrain) {
         setUniform(shaderProgram, "model", glm::mat4(1.0f));
         setUniform(shaderProgram, "hasTexture", 0);
+        setUniform(shaderProgram, "materialMode", 0);
         setUniform(shaderProgram, "objectColor", glm::vec3(0.30f, 0.55f, 0.25f));
         glBindVertexArray(groundVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -449,6 +480,7 @@ void display()
             glBindTexture(GL_TEXTURE_2D, fallbackWhiteTex);
             setUniform(shaderProgram, "hasTexture", 0);
         }
+        setUniform(shaderProgram, "materialMode", mesh.materialMode);
         setUniform(shaderProgram, "objectColor", mesh.baseColor);
         glBindVertexArray(mesh.vao);
         glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
@@ -460,6 +492,7 @@ void display()
 // Input
 // ---------------------------------------------------------------------------
 static bool flyKeyWasPressed = false;
+static bool landmarkKeyWasPressed[3] = {false, false, false};
 
 void processInput(GLFWwindow* window)
 {
@@ -474,6 +507,15 @@ void processInput(GLFWwindow* window)
         std::cout << (camera.flyMode ? "Fly mode ON" : "Fly mode OFF") << std::endl;
     }
     flyKeyWasPressed = flyKeyDown;
+
+    const int landmarkKeys[3] = {GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3};
+    for (int i = 0; i < 3; ++i) {
+        const bool keyDown = glfwGetKey(window, landmarkKeys[i]) == GLFW_PRESS;
+        if (keyDown && !landmarkKeyWasPressed[i]) {
+            jumpToLandmark(i);
+        }
+        landmarkKeyWasPressed[i] = keyDown;
+    }
 
     if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS) {
         camera.speed = camera.flyMode ? 80.0f : 35.0f;
@@ -592,7 +634,7 @@ int main()
     }
 
     std::cout << "OpenGL " << glGetString(GL_VERSION) << std::endl;
-    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, F = fly mode, Space/C = up/down (fly), ESC = quit" << std::endl;
+    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, F = fly mode, Space/C = up/down (fly), 1/2/3 = landmarks, ESC = quit" << std::endl;
 
     init();
 

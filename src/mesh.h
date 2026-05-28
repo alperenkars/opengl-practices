@@ -19,6 +19,7 @@ struct Mesh {
     GLsizei indexCount = 0;
     GLuint diffuseTex = 0;
     glm::vec3 baseColor = glm::vec3(1.0f);
+    int materialMode = 0;  // 0 = plain, 1 = untextured facade, 2 = roof, 3 = road/path
 };
 
 struct TerrainTriangle {
