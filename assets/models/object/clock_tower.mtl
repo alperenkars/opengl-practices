@@ -1,0 +1,24 @@
+newmtl tower_wall
+Kd 0.74 0.68 0.58
+Ks 0.08 0.08 0.08
+Ns 18
+
+newmtl tower_window
+Kd 0.08 0.10 0.11
+Ks 0.15 0.15 0.15
+Ns 30
+
+newmtl tower_roof
+Kd 0.16 0.12 0.09
+Ks 0.10 0.09 0.08
+Ns 20
+
+newmtl clock_face
+Kd 0.92 0.90 0.82
+Ks 0.06 0.06 0.06
+Ns 12
+
+newmtl clock_dark
+Kd 0.02 0.02 0.02
+Ks 0.04 0.04 0.04
+Ns 8

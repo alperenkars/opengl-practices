@@ -13,13 +13,16 @@ An interactive 3D virtual tour of Koç University campus built with C++ and Open
 | Mouse | Look around |
 | Left Shift | Sprint |
 | Left Alt | Turbo sprint |
+| F | Toggle fly mode |
+| Space / C | Move up/down in fly mode |
+| 1 / 2 / 3 | Jump to Rectorate / Library / Student Center demo views |
 | ESC | Quit |
 
 ## Build & Run
 
 ```bash
 # Install dependencies (macOS)
-brew install glfw glew assimp
+brew install glm glfw glew assimp
 
 # Build
 make

@@ -30,6 +30,8 @@ GLuint shaderProgram = 0;
 GLuint groundVAO = 0;
 GLuint fallbackWhiteTex = 0;
 Model campusModel;
+Model odeonModel;
+Model clockTowerModel;
 glm::mat4 sceneRootTransform(1.0f);
 float sceneScale = 1.0f;
 float farPlane = 2000.0f;
@@ -117,6 +119,35 @@ static void setUniform(GLuint prog, const char* name, int value)
     glUniform1i(glGetUniformLocation(prog, name), value);
 }
 
+struct LandmarkView {
+    const char* name;
+    glm::vec3 position;
+    float yaw;
+    float pitch;
+};
+
+static const LandmarkView LANDMARKS[] = {
+    {"Rectorate", glm::vec3(-2.0f, 112.0f, 188.0f), -82.0f, -13.0f},
+    {"Library", glm::vec3(-116.0f, 116.0f, 102.0f), -28.0f, -10.0f},
+    {"Student Center", glm::vec3(72.0f, 112.0f, -62.0f), -142.0f, -11.0f},
+};
+
+static void jumpToLandmark(int index)
+{
+    if (index < 0 || index >= static_cast<int>(sizeof(LANDMARKS) / sizeof(LANDMARKS[0]))) {
+        return;
+    }
+
+    const LandmarkView& view = LANDMARKS[index];
+    camera.flyMode = true;
+    camera.position = view.position * sceneScale;
+    camera.yaw = view.yaw;
+    camera.pitch = view.pitch;
+    camera.walkHeight = camera.position.y;
+    firstMouse = true;
+    std::cout << "Landmark view: " << view.name << std::endl;
+}
+
 static std::string resolveScenePath()
 {
     namespace fs = std::filesystem;
@@ -129,6 +160,42 @@ static std::string resolveScenePath()
         "assets/models/campus.obj",
         "assets/models/object/campus.glb",
         "assets/models/object/3_7_2026.glb",
+    };
+
+    for (const auto& p : candidates) {
+        if (fs::exists(p)) {
+            return p;
+        }
+    }
+    return "";
+}
+
+static std::string resolveOdeonPath()
+{
+    namespace fs = std::filesystem;
+    const std::vector<std::string> candidates = {
+        "assets/models/object/odeon.obj",
+        "assets/models/object/odeon.glb",
+        "assets/models/odeon.obj",
+        "assets/models/odeon.glb",
+    };
+
+    for (const auto& p : candidates) {
+        if (fs::exists(p)) {
+            return p;
+        }
+    }
+    return "";
+}
+
+static std::string resolveClockTowerPath()
+{
+    namespace fs = std::filesystem;
+    const std::vector<std::string> candidates = {
+        "assets/models/object/clock_tower.obj",
+        "assets/models/object/clock_tower.glb",
+        "assets/models/clock_tower.obj",
+        "assets/models/clock_tower.glb",
     };
 
     for (const auto& p : candidates) {
@@ -243,6 +310,12 @@ static bool sampleWalkSurfaceHeight(float worldX, float worldZ, float maxProbeY,
     return found;
 }
 
+static void appendWalkData(Model& target, const Model& source)
+{
+    target.walkSurface.insert(target.walkSurface.end(), source.walkSurface.begin(), source.walkSurface.end());
+    target.obstacles.insert(target.obstacles.end(), source.obstacles.begin(), source.obstacles.end());
+}
+
 static bool collidesWithBuilding(float worldX, float worldY, float worldZ)
 {
     const float x = worldX / sceneScale;
@@ -257,6 +330,25 @@ static bool collidesWithBuilding(float worldX, float worldY, float worldZ)
         return true;
     }
     return false;
+}
+
+static void printCameraProbe()
+{
+    const float maxProbeY = std::max(camera.position.y + 5.0f, campusModel.bboxMax.y * sceneScale + 10.0f);
+    float groundY = 0.0f;
+    const bool hasGround = sampleWalkSurfaceHeight(camera.position.x, camera.position.z, maxProbeY, groundY);
+
+    std::cout << "Camera probe: eye=("
+              << camera.position.x << ", " << camera.position.y << ", " << camera.position.z << ")"
+              << " yaw/pitch=(" << camera.yaw << ", " << camera.pitch << ")"
+              << " flyMode=" << (camera.flyMode ? "on" : "off");
+    if (hasGround) {
+        std::cout << " groundY=" << groundY
+                  << " foot=(" << camera.position.x << ", " << groundY << ", " << camera.position.z << ")";
+    } else {
+        std::cout << " groundY=none";
+    }
+    std::cout << std::endl;
 }
 
 static bool projectToWalkable(const glm::vec3& candidate, glm::vec3& corrected)
@@ -356,6 +448,31 @@ void init()
         std::cout << "Applied root scale 0.01 (centimeters -> meters assumption)." << std::endl;
     }
 
+    const std::string odeonPath = resolveOdeonPath();
+    if (!odeonPath.empty()) {
+        odeonModel = loadModel(odeonPath);
+        if (!odeonModel.meshes.empty()) {
+            appendWalkData(campusModel, odeonModel);
+            std::cout << "Loaded odeon: " << odeonPath << std::endl;
+        } else {
+            std::cerr << "Odeon asset had zero meshes: " << odeonPath << std::endl;
+        }
+    } else {
+        std::cerr << "No odeon asset found under assets/models/object/odeon.{obj,glb}." << std::endl;
+    }
+
+    const std::string clockTowerPath = resolveClockTowerPath();
+    if (!clockTowerPath.empty()) {
+        clockTowerModel = loadModel(clockTowerPath);
+        if (!clockTowerModel.meshes.empty()) {
+            std::cout << "Loaded clock tower: " << clockTowerPath << std::endl;
+        } else {
+            std::cerr << "Clock tower asset had zero meshes: " << clockTowerPath << std::endl;
+        }
+    } else {
+        std::cerr << "No clock tower asset found under assets/models/object/clock_tower.{obj,glb}." << std::endl;
+    }
+
     const glm::vec3 sceneCenter = (campusModel.bboxMin + campusModel.bboxMax) * 0.5f;
     glm::vec3 spawnPoint(sceneCenter.x, campusModel.bboxMin.y, sceneCenter.z);
     if (!findGuaranteedSpawn(spawnPoint)) {
@@ -405,12 +522,32 @@ void init()
 
     glEnable(GL_DEPTH_TEST);
     // Pre-linearize the sky color so it matches the gamma-corrected scene output
-    glClearColor(powf(0.53f, 2.2f), powf(0.81f, 2.2f), powf(0.92f, 2.2f), 1.0f);
+    glClearColor(powf(0.60f, 2.2f), powf(0.78f, 2.2f), powf(0.88f, 2.2f), 1.0f);
     fallbackWhiteTex = createFallbackWhiteTexture();
 
     glUseProgram(shaderProgram);
     setUniform(shaderProgram, "diffuseMap", 0);
     setUniform(shaderProgram, "hasTexture", 0);
+    setUniform(shaderProgram, "materialMode", 0);
+}
+
+static void drawModel(const Model& model)
+{
+    for (const auto& mesh : model.meshes) {
+        if (mesh.diffuseTex != 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, mesh.diffuseTex);
+            setUniform(shaderProgram, "hasTexture", 1);
+        } else {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, fallbackWhiteTex);
+            setUniform(shaderProgram, "hasTexture", 0);
+        }
+        setUniform(shaderProgram, "materialMode", mesh.materialMode);
+        setUniform(shaderProgram, "objectColor", mesh.baseColor);
+        glBindVertexArray(mesh.vao);
+        glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
+    }
 }
 
 void display()
@@ -427,32 +564,22 @@ void display()
     setUniform(shaderProgram, "view", view);
     setUniform(shaderProgram, "projection", projection);
     setUniform(shaderProgram, "viewPos", camera.position);
-    setUniform(shaderProgram, "lightDir", glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f)));
-    setUniform(shaderProgram, "lightColor", glm::vec3(1.0f, 0.98f, 0.95f));
+    setUniform(shaderProgram, "lightDir", glm::normalize(glm::vec3(-0.35f, 0.85f, 0.45f)));
+    setUniform(shaderProgram, "lightColor", glm::vec3(0.92f, 0.90f, 0.84f));
 
     if (!campusModel.sceneHasTerrain) {
         setUniform(shaderProgram, "model", glm::mat4(1.0f));
         setUniform(shaderProgram, "hasTexture", 0);
+        setUniform(shaderProgram, "materialMode", 0);
         setUniform(shaderProgram, "objectColor", glm::vec3(0.30f, 0.55f, 0.25f));
         glBindVertexArray(groundVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
     setUniform(shaderProgram, "model", sceneRootTransform);
-    for (const auto& mesh : campusModel.meshes) {
-        if (mesh.diffuseTex != 0) {
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, mesh.diffuseTex);
-            setUniform(shaderProgram, "hasTexture", 1);
-        } else {
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, fallbackWhiteTex);
-            setUniform(shaderProgram, "hasTexture", 0);
-        }
-        setUniform(shaderProgram, "objectColor", mesh.baseColor);
-        glBindVertexArray(mesh.vao);
-        glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
-    }
+    drawModel(campusModel);
+    drawModel(odeonModel);
+    drawModel(clockTowerModel);
     glBindVertexArray(0);
 }
 
@@ -460,6 +587,8 @@ void display()
 // Input
 // ---------------------------------------------------------------------------
 static bool flyKeyWasPressed = false;
+static bool probeKeyWasPressed = false;
+static bool landmarkKeyWasPressed[3] = {false, false, false};
 
 void processInput(GLFWwindow* window)
 {
@@ -474,6 +603,21 @@ void processInput(GLFWwindow* window)
         std::cout << (camera.flyMode ? "Fly mode ON" : "Fly mode OFF") << std::endl;
     }
     flyKeyWasPressed = flyKeyDown;
+
+    const bool probeKeyDown = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
+    if (probeKeyDown && !probeKeyWasPressed) {
+        printCameraProbe();
+    }
+    probeKeyWasPressed = probeKeyDown;
+
+    const int landmarkKeys[3] = {GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3};
+    for (int i = 0; i < 3; ++i) {
+        const bool keyDown = glfwGetKey(window, landmarkKeys[i]) == GLFW_PRESS;
+        if (keyDown && !landmarkKeyWasPressed[i]) {
+            jumpToLandmark(i);
+        }
+        landmarkKeyWasPressed[i] = keyDown;
+    }
 
     if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS) {
         camera.speed = camera.flyMode ? 80.0f : 35.0f;
@@ -592,7 +736,7 @@ int main()
     }
 
     std::cout << "OpenGL " << glGetString(GL_VERSION) << std::endl;
-    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, F = fly mode, Space/C = up/down (fly), ESC = quit" << std::endl;
+    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, F = fly mode, Space/C = up/down (fly), P = print camera probe, 1/2/3 = landmarks, ESC = quit" << std::endl;
 
     init();
 
