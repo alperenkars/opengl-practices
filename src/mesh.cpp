@@ -4,6 +4,8 @@
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -33,6 +35,11 @@ bool isWalkSurfaceName(const std::string& meshName)
            n.find("road") != std::string::npos ||
            n.find("path") != std::string::npos ||
            n.find("pedestrian") != std::string::npos;
+}
+
+bool isOdeonName(const std::string& meshName)
+{
+    return toLower(meshName).find("odeon") != std::string::npos;
 }
 
 bool isBuildingName(const std::string& meshName)
@@ -86,10 +93,10 @@ glm::vec3 buildingWallColor(unsigned int seed)
 glm::vec3 buildingRoofColor(unsigned int seed)
 {
     static const glm::vec3 palette[] = {
-        {0.66f, 0.65f, 0.61f},  // pale concrete
-        {0.58f, 0.56f, 0.52f},  // warm grey
-        {0.70f, 0.68f, 0.63f},  // off-white stone
-        {0.54f, 0.51f, 0.47f},  // weathered roof
+        {0.62f, 0.23f, 0.12f},  // terracotta red
+        {0.72f, 0.32f, 0.15f},  // sunlit clay
+        {0.52f, 0.18f, 0.10f},  // aged red tile
+        {0.68f, 0.27f, 0.11f},  // warm roof tile
     };
     return palette[seed % 4];
 }
@@ -120,6 +127,18 @@ glm::vec3 assignColor(const std::string& meshName)
 {
     const std::string n = toLower(meshName);
 
+    if (isOdeonName(n)) {
+        if (n.find("structure") != std::string::npos) {
+            return glm::vec3(0.55f, 0.50f, 0.44f);
+        }
+        return glm::vec3(0.68f, 0.64f, 0.57f);
+    }
+    if (n.find("map.osm_buildings.022") != std::string::npos) {
+        if (isBuildingRoof(n)) {
+            return glm::vec3(0.64f, 0.24f, 0.11f);
+        }
+        return glm::vec3(0.78f, 0.73f, 0.63f);
+    }
     if (n.find("building") != std::string::npos) {
         unsigned int idx = buildingIndex(n);
         if (isBuildingRoof(n)) {
@@ -156,6 +175,7 @@ bool shouldKeepSemanticColor(const std::string& meshName)
     return isBuildingName(meshName) ||
            isRoadName(meshName) ||
            isPathName(meshName) ||
+           isOdeonName(meshName) ||
            toLower(meshName).find("vegetation") != std::string::npos;
 }
 
@@ -185,6 +205,251 @@ int materialModeForMesh(const std::string& meshName, const std::vector<Vertex>& 
     return 0;
 }
 
+bool isRectorateMeshName(const std::string& meshName)
+{
+    return toLower(meshName).find("map.osm_buildings.022") != std::string::npos;
+}
+
+bool isKocDetailMeshName(const std::string& meshName)
+{
+    return toLower(meshName).find("koc_") != std::string::npos;
+}
+
+struct RectorateLayout {
+    float xMin = 0.0f;
+    float xMax = 0.0f;
+    float zMin = 0.0f;
+    float zMax = 0.0f;
+    float centerMinZ = 0.0f;
+    float centerMaxZ = 0.0f;
+    float gateMinZ = 0.0f;
+    float gateMaxZ = 0.0f;
+    float baseY = 0.0f;
+    float sideTopY = 0.0f;
+    float archTopY = 0.0f;
+    float centerTopY = 0.0f;
+};
+
+bool hasRectorateLayout = false;
+RectorateLayout rectorateLayout{};
+
+void computeBounds(const std::vector<Vertex>& vertices, glm::vec3& outMin, glm::vec3& outMax)
+{
+    outMin = glm::vec3(std::numeric_limits<float>::max());
+    outMax = glm::vec3(std::numeric_limits<float>::lowest());
+    for (const auto& v : vertices) {
+        outMin = glm::min(outMin, v.pos);
+        outMax = glm::max(outMax, v.pos);
+    }
+}
+
+RectorateLayout makeRectorateLayout(const glm::vec3& meshMin, const glm::vec3& meshMax)
+{
+    RectorateLayout layout{};
+    layout.xMin = meshMin.x;
+    layout.xMax = meshMax.x;
+    layout.zMin = meshMin.z;
+    layout.zMax = meshMax.z;
+
+    const float spanZ = meshMax.z - meshMin.z;
+    const float centerZ = (meshMin.z + meshMax.z) * 0.5f;
+    const float gateHalfZ = std::clamp(spanZ * 0.115f, 5.0f, 7.5f);
+    const float centerHalfZ = std::clamp(spanZ * 0.17f, gateHalfZ + 2.75f, spanZ * 0.28f);
+    layout.gateMinZ = centerZ - gateHalfZ;
+    layout.gateMaxZ = centerZ + gateHalfZ;
+    layout.centerMinZ = centerZ - centerHalfZ;
+    layout.centerMaxZ = centerZ + centerHalfZ;
+
+    const float height = meshMax.y - meshMin.y;
+    if (height > 5.0f) {
+        layout.baseY = meshMin.y;
+        layout.sideTopY = meshMin.y + height * 0.78f;
+        layout.archTopY = meshMin.y + height * 0.58f;
+        layout.centerTopY = meshMin.y + height * 1.27f;
+    } else {
+        layout.baseY = meshMax.y - 18.9f;
+        layout.sideTopY = meshMax.y - 4.2f;
+        layout.archTopY = layout.baseY + 11.0f;
+        layout.centerTopY = meshMax.y + 5.1f;
+    }
+    return layout;
+}
+
+void addQuad(std::vector<Vertex>& vertices,
+             std::vector<unsigned int>& indices,
+             const glm::vec3& a,
+             const glm::vec3& b,
+             const glm::vec3& c,
+             const glm::vec3& d,
+             const glm::vec3& normal)
+{
+    const unsigned int start = static_cast<unsigned int>(vertices.size());
+    vertices.push_back({a, normal, glm::vec2(0.0f, 0.0f)});
+    vertices.push_back({b, normal, glm::vec2(1.0f, 0.0f)});
+    vertices.push_back({c, normal, glm::vec2(1.0f, 1.0f)});
+    vertices.push_back({d, normal, glm::vec2(0.0f, 1.0f)});
+    indices.insert(indices.end(), {
+        start, start + 1, start + 2,
+        start, start + 2, start + 3
+    });
+}
+
+void addBox(std::vector<Vertex>& vertices,
+            std::vector<unsigned int>& indices,
+            float xMin,
+            float xMax,
+            float yMin,
+            float yMax,
+            float zMin,
+            float zMax,
+            bool includeTop,
+            bool includeBottom)
+{
+    addQuad(vertices, indices,
+            glm::vec3(xMax, yMin, zMin), glm::vec3(xMax, yMin, zMax),
+            glm::vec3(xMax, yMax, zMax), glm::vec3(xMax, yMax, zMin),
+            glm::vec3(1.0f, 0.0f, 0.0f));
+    addQuad(vertices, indices,
+            glm::vec3(xMin, yMin, zMax), glm::vec3(xMin, yMin, zMin),
+            glm::vec3(xMin, yMax, zMin), glm::vec3(xMin, yMax, zMax),
+            glm::vec3(-1.0f, 0.0f, 0.0f));
+    addQuad(vertices, indices,
+            glm::vec3(xMin, yMin, zMax), glm::vec3(xMax, yMin, zMax),
+            glm::vec3(xMax, yMax, zMax), glm::vec3(xMin, yMax, zMax),
+            glm::vec3(0.0f, 0.0f, 1.0f));
+    addQuad(vertices, indices,
+            glm::vec3(xMax, yMin, zMin), glm::vec3(xMin, yMin, zMin),
+            glm::vec3(xMin, yMax, zMin), glm::vec3(xMax, yMax, zMin),
+            glm::vec3(0.0f, 0.0f, -1.0f));
+
+    if (includeTop) {
+        addQuad(vertices, indices,
+                glm::vec3(xMin, yMax, zMin), glm::vec3(xMax, yMax, zMin),
+                glm::vec3(xMax, yMax, zMax), glm::vec3(xMin, yMax, zMax),
+                glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+    if (includeBottom) {
+        addQuad(vertices, indices,
+                glm::vec3(xMin, yMin, zMax), glm::vec3(xMax, yMin, zMax),
+                glm::vec3(xMax, yMin, zMin), glm::vec3(xMin, yMin, zMin),
+                glm::vec3(0.0f, -1.0f, 0.0f));
+    }
+}
+
+void buildRectorateWallGeometry(const RectorateLayout& layout,
+                                std::vector<Vertex>& vertices,
+                                std::vector<unsigned int>& indices)
+{
+    vertices.clear();
+    indices.clear();
+
+    addBox(vertices, indices,
+           layout.xMin, layout.xMax, layout.baseY, layout.sideTopY,
+           layout.zMin, layout.centerMinZ, false, false);
+    addBox(vertices, indices,
+           layout.xMin, layout.xMax, layout.baseY, layout.sideTopY,
+           layout.centerMaxZ, layout.zMax, false, false);
+
+    addBox(vertices, indices,
+           layout.xMin, layout.xMax, layout.baseY, layout.centerTopY,
+           layout.centerMinZ, layout.gateMinZ, false, false);
+    addBox(vertices, indices,
+           layout.xMin, layout.xMax, layout.baseY, layout.centerTopY,
+           layout.gateMaxZ, layout.centerMaxZ, false, false);
+    addBox(vertices, indices,
+           layout.xMin, layout.xMax, layout.archTopY, layout.centerTopY,
+           layout.gateMinZ, layout.gateMaxZ, false, true);
+}
+
+void buildRectorateRoofGeometry(const RectorateLayout& layout,
+                                std::vector<Vertex>& vertices,
+                                std::vector<unsigned int>& indices)
+{
+    vertices.clear();
+    indices.clear();
+
+    const float xOverhang = std::min((layout.xMax - layout.xMin) * 0.08f, 1.2f);
+    const float zOverhang = 0.9f;
+    const float sideRoofThickness = 0.65f;
+    const float centerRoofThickness = 0.75f;
+
+    addBox(vertices, indices,
+           layout.xMin - xOverhang, layout.xMax + xOverhang,
+           layout.sideTopY, layout.sideTopY + sideRoofThickness,
+           layout.zMin - zOverhang, layout.centerMinZ + 0.25f,
+           true, false);
+    addBox(vertices, indices,
+           layout.xMin - xOverhang, layout.xMax + xOverhang,
+           layout.sideTopY, layout.sideTopY + sideRoofThickness,
+           layout.centerMaxZ - 0.25f, layout.zMax + zOverhang,
+           true, false);
+    addBox(vertices, indices,
+           layout.xMin - xOverhang, layout.xMax + xOverhang,
+           layout.centerTopY, layout.centerTopY + centerRoofThickness,
+           layout.centerMinZ - zOverhang, layout.centerMaxZ + zOverhang,
+           true, false);
+}
+
+bool isInsideRectorateGateOpening(const glm::vec3& p)
+{
+    if (!hasRectorateLayout) {
+        return false;
+    }
+
+    return p.x >= rectorateLayout.xMin - 0.35f &&
+           p.x <= rectorateLayout.xMax + 0.35f &&
+           p.z >= rectorateLayout.gateMinZ - 0.35f &&
+           p.z <= rectorateLayout.gateMaxZ + 0.35f &&
+           p.y >= rectorateLayout.baseY - 0.35f &&
+           p.y <= rectorateLayout.archTopY + 0.45f;
+}
+
+bool shouldCullRectorateGateDetail(const std::string& meshName,
+                                   const Vertex& a,
+                                   const Vertex& b,
+                                   const Vertex& c)
+{
+    if (!isKocDetailMeshName(meshName)) {
+        return false;
+    }
+
+    const glm::vec3 centroid = (a.pos + b.pos + c.pos) / 3.0f;
+    return isInsideRectorateGateOpening(centroid);
+}
+
+void appendObstacle(Model& model,
+                    float xMin,
+                    float xMax,
+                    float zMin,
+                    float zMax,
+                    float yMin,
+                    float yMax)
+{
+    if (xMax <= xMin || zMax <= zMin || yMax <= yMin) {
+        return;
+    }
+    model.obstacles.push_back({
+        glm::vec2(xMin, zMin),
+        glm::vec2(xMax, zMax),
+        yMin,
+        yMax
+    });
+}
+
+void appendRectorateObstacles(Model& model, const RectorateLayout& layout)
+{
+    appendObstacle(model, layout.xMin, layout.xMax, layout.zMin, layout.centerMinZ,
+                   layout.baseY, layout.sideTopY);
+    appendObstacle(model, layout.xMin, layout.xMax, layout.centerMaxZ, layout.zMax,
+                   layout.baseY, layout.sideTopY);
+    appendObstacle(model, layout.xMin, layout.xMax, layout.centerMinZ, layout.gateMinZ,
+                   layout.baseY, layout.centerTopY);
+    appendObstacle(model, layout.xMin, layout.xMax, layout.gateMaxZ, layout.centerMaxZ,
+                   layout.baseY, layout.centerTopY);
+    appendObstacle(model, layout.xMin, layout.xMax, layout.gateMinZ, layout.gateMaxZ,
+                   layout.archTopY, layout.centerTopY);
+}
+
 Mesh buildMesh(const aiScene* scene,
                const aiMesh* ai_mesh,
                const std::filesystem::path& modelDir,
@@ -199,6 +464,7 @@ Mesh buildMesh(const aiScene* scene,
     vertices.reserve(ai_mesh->mNumVertices);
     indices.reserve(ai_mesh->mNumFaces * 3);
 
+    const std::string meshName = ai_mesh->mName.C_Str();
     aiMatrix3x3 normalMatrix(worldTransform);
     normalMatrix.Inverse().Transpose();
 
@@ -219,26 +485,46 @@ Mesh buildMesh(const aiScene* scene,
             v.uv = glm::vec2(0.0f);
         }
 
-        bboxMin = glm::min(bboxMin, v.pos);
-        bboxMax = glm::max(bboxMax, v.pos);
         vertices.push_back(v);
     }
 
     glm::vec3 meshMin(std::numeric_limits<float>::max());
     glm::vec3 meshMax(std::numeric_limits<float>::lowest());
-    for (const auto& v : vertices) {
-        meshMin = glm::min(meshMin, v.pos);
-        meshMax = glm::max(meshMax, v.pos);
-    }
+    computeBounds(vertices, meshMin, meshMax);
 
     for (unsigned int f = 0; f < ai_mesh->mNumFaces; ++f) {
         const aiFace& face = ai_mesh->mFaces[f];
+        if (face.mNumIndices == 3 &&
+            shouldCullRectorateGateDetail(meshName,
+                                          vertices[face.mIndices[0]],
+                                          vertices[face.mIndices[1]],
+                                          vertices[face.mIndices[2]])) {
+            continue;
+        }
         for (unsigned int j = 0; j < face.mNumIndices; ++j) {
             indices.push_back(face.mIndices[j]);
         }
     }
 
-    if (isWalkSurfaceName(ai_mesh->mName.C_Str())) {
+    if (isRectorateMeshName(meshName)) {
+        RectorateLayout layout = hasRectorateLayout ? rectorateLayout : makeRectorateLayout(meshMin, meshMax);
+        if (isBuildingRoof(meshName)) {
+            buildRectorateRoofGeometry(layout, vertices, indices);
+        } else {
+            layout = makeRectorateLayout(meshMin, meshMax);
+            rectorateLayout = layout;
+            hasRectorateLayout = true;
+            buildRectorateWallGeometry(layout, vertices, indices);
+        }
+        computeBounds(vertices, meshMin, meshMax);
+    }
+
+    for (const auto& v : vertices) {
+        bboxMin = glm::min(bboxMin, v.pos);
+        bboxMax = glm::max(bboxMax, v.pos);
+    }
+
+    if (isWalkSurfaceName(meshName)) {
         for (unsigned int f = 0; f < ai_mesh->mNumFaces; ++f) {
             const aiFace& face = ai_mesh->mFaces[f];
             if (face.mNumIndices != 3) continue;
@@ -249,7 +535,9 @@ Mesh buildMesh(const aiScene* scene,
         }
     }
 
-    if (isBuildingName(ai_mesh->mName.C_Str())) {
+    if (isRectorateMeshName(meshName) && !isBuildingRoof(meshName) && hasRectorateLayout) {
+        appendRectorateObstacles(model, rectorateLayout);
+    } else if (isBuildingName(meshName)) {
         const float height = meshMax.y - meshMin.y;
         const float spanX = meshMax.x - meshMin.x;
         const float spanZ = meshMax.z - meshMin.z;
@@ -286,7 +574,6 @@ Mesh buildMesh(const aiScene* scene,
     mesh.indexCount = static_cast<GLsizei>(indices.size());
 
     // Assign a natural color based on mesh type (buildings, roads, etc.)
-    const std::string meshName = ai_mesh->mName.C_Str();
     mesh.baseColor = assignColor(meshName);
     mesh.materialMode = materialModeForMesh(meshName, vertices);
 
@@ -300,7 +587,10 @@ Mesh buildMesh(const aiScene* scene,
             const bool isDefault = (std::abs(color.r - 1.0f) < 0.01f &&
                                     std::abs(color.g - 1.0f) < 0.01f &&
                                     std::abs(color.b - 1.0f) < 0.01f);
-            if (!isDefault && !(shouldKeepSemanticColor(meshName) && isGenericMaterialColor(color))) {
+            const bool keepSemanticColor =
+                shouldKeepSemanticColor(meshName) &&
+                (isGenericMaterialColor(color) || (isBuildingName(meshName) && isBuildingRoof(meshName)));
+            if (!isDefault && !keepSemanticColor) {
                 mesh.baseColor = glm::vec3(color.r, color.g, color.b);
             }
         }
@@ -379,6 +669,8 @@ void processNode(const aiScene* scene,
 Model loadModel(const std::string& path)
 {
     Model model{};
+    hasRectorateLayout = false;
+    rectorateLayout = RectorateLayout{};
 
     Assimp::Importer importer;
     // PreTransformVertices flattens node transforms into final vertex positions.

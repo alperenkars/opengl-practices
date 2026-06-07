@@ -30,6 +30,8 @@ GLuint shaderProgram = 0;
 GLuint groundVAO = 0;
 GLuint fallbackWhiteTex = 0;
 Model campusModel;
+Model odeonModel;
+Model clockTowerModel;
 glm::mat4 sceneRootTransform(1.0f);
 float sceneScale = 1.0f;
 float farPlane = 2000.0f;
@@ -168,6 +170,42 @@ static std::string resolveScenePath()
     return "";
 }
 
+static std::string resolveOdeonPath()
+{
+    namespace fs = std::filesystem;
+    const std::vector<std::string> candidates = {
+        "assets/models/object/odeon.obj",
+        "assets/models/object/odeon.glb",
+        "assets/models/odeon.obj",
+        "assets/models/odeon.glb",
+    };
+
+    for (const auto& p : candidates) {
+        if (fs::exists(p)) {
+            return p;
+        }
+    }
+    return "";
+}
+
+static std::string resolveClockTowerPath()
+{
+    namespace fs = std::filesystem;
+    const std::vector<std::string> candidates = {
+        "assets/models/object/clock_tower.obj",
+        "assets/models/object/clock_tower.glb",
+        "assets/models/clock_tower.obj",
+        "assets/models/clock_tower.glb",
+    };
+
+    for (const auto& p : candidates) {
+        if (fs::exists(p)) {
+            return p;
+        }
+    }
+    return "";
+}
+
 static glm::vec3 sceneExtent(const Model& m)
 {
     return m.bboxMax - m.bboxMin;
@@ -272,6 +310,12 @@ static bool sampleWalkSurfaceHeight(float worldX, float worldZ, float maxProbeY,
     return found;
 }
 
+static void appendWalkData(Model& target, const Model& source)
+{
+    target.walkSurface.insert(target.walkSurface.end(), source.walkSurface.begin(), source.walkSurface.end());
+    target.obstacles.insert(target.obstacles.end(), source.obstacles.begin(), source.obstacles.end());
+}
+
 static bool collidesWithBuilding(float worldX, float worldY, float worldZ)
 {
     const float x = worldX / sceneScale;
@@ -286,6 +330,25 @@ static bool collidesWithBuilding(float worldX, float worldY, float worldZ)
         return true;
     }
     return false;
+}
+
+static void printCameraProbe()
+{
+    const float maxProbeY = std::max(camera.position.y + 5.0f, campusModel.bboxMax.y * sceneScale + 10.0f);
+    float groundY = 0.0f;
+    const bool hasGround = sampleWalkSurfaceHeight(camera.position.x, camera.position.z, maxProbeY, groundY);
+
+    std::cout << "Camera probe: eye=("
+              << camera.position.x << ", " << camera.position.y << ", " << camera.position.z << ")"
+              << " yaw/pitch=(" << camera.yaw << ", " << camera.pitch << ")"
+              << " flyMode=" << (camera.flyMode ? "on" : "off");
+    if (hasGround) {
+        std::cout << " groundY=" << groundY
+                  << " foot=(" << camera.position.x << ", " << groundY << ", " << camera.position.z << ")";
+    } else {
+        std::cout << " groundY=none";
+    }
+    std::cout << std::endl;
 }
 
 static bool projectToWalkable(const glm::vec3& candidate, glm::vec3& corrected)
@@ -385,6 +448,31 @@ void init()
         std::cout << "Applied root scale 0.01 (centimeters -> meters assumption)." << std::endl;
     }
 
+    const std::string odeonPath = resolveOdeonPath();
+    if (!odeonPath.empty()) {
+        odeonModel = loadModel(odeonPath);
+        if (!odeonModel.meshes.empty()) {
+            appendWalkData(campusModel, odeonModel);
+            std::cout << "Loaded odeon: " << odeonPath << std::endl;
+        } else {
+            std::cerr << "Odeon asset had zero meshes: " << odeonPath << std::endl;
+        }
+    } else {
+        std::cerr << "No odeon asset found under assets/models/object/odeon.{obj,glb}." << std::endl;
+    }
+
+    const std::string clockTowerPath = resolveClockTowerPath();
+    if (!clockTowerPath.empty()) {
+        clockTowerModel = loadModel(clockTowerPath);
+        if (!clockTowerModel.meshes.empty()) {
+            std::cout << "Loaded clock tower: " << clockTowerPath << std::endl;
+        } else {
+            std::cerr << "Clock tower asset had zero meshes: " << clockTowerPath << std::endl;
+        }
+    } else {
+        std::cerr << "No clock tower asset found under assets/models/object/clock_tower.{obj,glb}." << std::endl;
+    }
+
     const glm::vec3 sceneCenter = (campusModel.bboxMin + campusModel.bboxMax) * 0.5f;
     glm::vec3 spawnPoint(sceneCenter.x, campusModel.bboxMin.y, sceneCenter.z);
     if (!findGuaranteedSpawn(spawnPoint)) {
@@ -443,6 +531,25 @@ void init()
     setUniform(shaderProgram, "materialMode", 0);
 }
 
+static void drawModel(const Model& model)
+{
+    for (const auto& mesh : model.meshes) {
+        if (mesh.diffuseTex != 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, mesh.diffuseTex);
+            setUniform(shaderProgram, "hasTexture", 1);
+        } else {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, fallbackWhiteTex);
+            setUniform(shaderProgram, "hasTexture", 0);
+        }
+        setUniform(shaderProgram, "materialMode", mesh.materialMode);
+        setUniform(shaderProgram, "objectColor", mesh.baseColor);
+        glBindVertexArray(mesh.vao);
+        glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
+    }
+}
+
 void display()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -470,21 +577,9 @@ void display()
     }
 
     setUniform(shaderProgram, "model", sceneRootTransform);
-    for (const auto& mesh : campusModel.meshes) {
-        if (mesh.diffuseTex != 0) {
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, mesh.diffuseTex);
-            setUniform(shaderProgram, "hasTexture", 1);
-        } else {
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, fallbackWhiteTex);
-            setUniform(shaderProgram, "hasTexture", 0);
-        }
-        setUniform(shaderProgram, "materialMode", mesh.materialMode);
-        setUniform(shaderProgram, "objectColor", mesh.baseColor);
-        glBindVertexArray(mesh.vao);
-        glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
-    }
+    drawModel(campusModel);
+    drawModel(odeonModel);
+    drawModel(clockTowerModel);
     glBindVertexArray(0);
 }
 
@@ -492,6 +587,7 @@ void display()
 // Input
 // ---------------------------------------------------------------------------
 static bool flyKeyWasPressed = false;
+static bool probeKeyWasPressed = false;
 static bool landmarkKeyWasPressed[3] = {false, false, false};
 
 void processInput(GLFWwindow* window)
@@ -507,6 +603,12 @@ void processInput(GLFWwindow* window)
         std::cout << (camera.flyMode ? "Fly mode ON" : "Fly mode OFF") << std::endl;
     }
     flyKeyWasPressed = flyKeyDown;
+
+    const bool probeKeyDown = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
+    if (probeKeyDown && !probeKeyWasPressed) {
+        printCameraProbe();
+    }
+    probeKeyWasPressed = probeKeyDown;
 
     const int landmarkKeys[3] = {GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3};
     for (int i = 0; i < 3; ++i) {
@@ -634,7 +736,7 @@ int main()
     }
 
     std::cout << "OpenGL " << glGetString(GL_VERSION) << std::endl;
-    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, F = fly mode, Space/C = up/down (fly), 1/2/3 = landmarks, ESC = quit" << std::endl;
+    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, F = fly mode, Space/C = up/down (fly), P = print camera probe, 1/2/3 = landmarks, ESC = quit" << std::endl;
 
     init();
 

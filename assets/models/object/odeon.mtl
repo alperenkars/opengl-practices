@@ -1,0 +1,19 @@
+newmtl odeon_tread
+Kd 0.72 0.64 0.55
+Ks 0.08 0.08 0.08
+Ns 18
+
+newmtl odeon_aisle
+Kd 0.78 0.74 0.66
+Ks 0.06 0.06 0.06
+Ns 12
+
+newmtl odeon_riser
+Kd 0.50 0.47 0.42
+Ks 0.05 0.05 0.05
+Ns 10
+
+newmtl odeon_wall
+Kd 0.58 0.54 0.48
+Ks 0.05 0.05 0.05
+Ns 10

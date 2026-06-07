@@ -63,11 +63,21 @@ void main()
         baseColor = mix(baseColor, mullionColor, verticalMullion * 0.35);
         baseColor = mix(baseColor, glassColor, windowMask * 0.58);
     } else if (materialMode == 2) {
-        float roofLine = smoothstep(0.00, 0.025, fract(fragPos.x * 0.08)) *
-                         (1.0 - smoothstep(0.04, 0.08, fract(fragPos.x * 0.08)));
-        roofLine += smoothstep(0.00, 0.025, fract(fragPos.z * 0.08)) *
-                    (1.0 - smoothstep(0.04, 0.08, fract(fragPos.z * 0.08)));
-        baseColor *= mix(1.0, 0.90, clamp(roofLine, 0.0, 1.0));
+        vec2 roofUV = vec2(fragPos.x * 0.28, fragPos.z * 0.16);
+        float row = fract(roofUV.y);
+        float tile = fract(roofUV.x + floor(roofUV.y) * 0.45);
+
+        float rowSeam = smoothstep(0.00, 0.035, row) *
+                        (1.0 - smoothstep(0.075, 0.13, row));
+        float tileSeam = smoothstep(0.00, 0.025, tile) *
+                         (1.0 - smoothstep(0.045, 0.085, tile));
+        float ridge = 0.5 + 0.5 * sin(tile * 3.14159);
+        float weathering = 0.06 * sin(fragPos.x * 0.37) + 0.04 * sin(fragPos.z * 0.51);
+
+        vec3 clay = mix(baseColor * 0.85, baseColor * 1.18, ridge);
+        clay += vec3(weathering, weathering * 0.55, weathering * 0.25);
+        clay = mix(clay, clay * 0.55, clamp(rowSeam + tileSeam, 0.0, 1.0));
+        baseColor = clamp(clay, 0.0, 1.0);
     } else if (materialMode == 3) {
         float paving = 0.04 * sin(fragPos.x * 0.35) * sin(fragPos.z * 0.35);
         baseColor = clamp(baseColor + vec3(paving), 0.0, 1.0);
