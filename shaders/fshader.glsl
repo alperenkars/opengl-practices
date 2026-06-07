@@ -10,9 +10,39 @@ uniform vec3 lightColor;
 uniform vec3 viewPos;
 uniform sampler2D diffuseMap;
 uniform bool hasTexture;
-uniform int materialMode;  // 0 = plain, 1 = facade, 2 = roof, 3 = road/path
+uniform int materialMode;  // 0 = plain, 1 = facade, 2 = roof, 3 = road/path, 4 = rectorate facade, 5 = grass, 6 = stone
 
 out vec4 fColor;
+
+float rectMask(vec2 p, vec2 minCorner, vec2 maxCorner)
+{
+    vec2 feather = vec2(0.08);
+    vec2 insideMin = smoothstep(minCorner, minCorner + feather, p);
+    vec2 insideMax = 1.0 - smoothstep(maxCorner - feather, maxCorner, p);
+    return insideMin.x * insideMin.y * insideMax.x * insideMax.y;
+}
+
+void addWindow(vec2 p,
+               vec2 center,
+               vec2 halfSize,
+               inout float trimMask,
+               inout float glassMask,
+               inout float mullionMask)
+{
+    vec2 trimPad = vec2(0.28, 0.34);
+    float trim = rectMask(p, center - halfSize - trimPad, center + halfSize + trimPad);
+    float glass = rectMask(p, center - halfSize, center + halfSize);
+    float verticalBar = rectMask(p,
+                                 vec2(center.x - 0.055, center.y - halfSize.y),
+                                 vec2(center.x + 0.055, center.y + halfSize.y));
+    float horizontalBar = rectMask(p,
+                                   vec2(center.x - halfSize.x, center.y - 0.055),
+                                   vec2(center.x + halfSize.x, center.y + 0.055));
+
+    trimMask = max(trimMask, trim);
+    glassMask = max(glassMask, glass);
+    mullionMask = max(mullionMask, glass * max(verticalBar, horizontalBar));
+}
 
 void main()
 {
@@ -35,7 +65,69 @@ void main()
     vec3 specular = specStrength * spec * lightColor;
 
     vec3 baseColor = objectColor;
-    if (hasTexture) {
+    if (materialMode == 4 && abs(norm.y) < 0.55) {
+        float floorBand = smoothstep(0.16, 0.0, abs(fragPos.y - 78.8)) +
+                          smoothstep(0.16, 0.0, abs(fragPos.y - 84.4));
+        baseColor = mix(baseColor, baseColor * 0.82, clamp(floorBand, 0.0, 1.0) * 0.45);
+
+        float trimMask = 0.0;
+        float glassMask = 0.0;
+        float mullionMask = 0.0;
+
+        if (abs(norm.x) > abs(norm.z)) {
+            vec2 p = vec2(fragPos.z, fragPos.y);
+            vec2 sideWindow = vec2(0.86, 1.12);
+            addWindow(p, vec2(66.4, 77.2), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(72.3, 77.2), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(78.2, 77.2), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(66.4, 82.4), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(72.3, 82.4), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(78.2, 82.4), sideWindow, trimMask, glassMask, mullionMask);
+
+            addWindow(p, vec2(106.1, 77.2), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(112.0, 77.2), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(117.9, 77.2), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(106.1, 82.4), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(112.0, 82.4), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(117.9, 82.4), sideWindow, trimMask, glassMask, mullionMask);
+
+            vec2 towerWindow = vec2(0.64, 1.85);
+            addWindow(p, vec2(87.7, 90.4), towerWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(92.2, 90.4), towerWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(96.7, 90.4), towerWindow, trimMask, glassMask, mullionMask);
+        } else {
+            vec2 p = vec2(fragPos.x, fragPos.y);
+            vec2 sideWindow = vec2(0.62, 1.05);
+            addWindow(p, vec2(-57.8, 77.4), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(-48.6, 77.4), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(-57.8, 82.2), sideWindow, trimMask, glassMask, mullionMask);
+            addWindow(p, vec2(-48.6, 82.2), sideWindow, trimMask, glassMask, mullionMask);
+        }
+
+        vec3 trimColor = vec3(0.58, 0.53, 0.45);
+        vec3 glassColor = vec3(0.055, 0.075, 0.080);
+        vec3 mullionColor = vec3(0.18, 0.12, 0.08);
+
+        float frameOnly = clamp(trimMask - glassMask, 0.0, 1.0);
+        baseColor = mix(baseColor, trimColor, frameOnly * 0.82);
+        baseColor = mix(baseColor, glassColor, glassMask * 0.92);
+        baseColor = mix(baseColor, mullionColor, mullionMask * 0.98);
+    } else if (materialMode == 5) {
+        float bladeNoise = 0.045 * sin(fragPos.x * 1.7) +
+                           0.030 * sin(fragPos.z * 2.3) +
+                           0.018 * sin((fragPos.x + fragPos.z) * 5.1);
+        float stripe = 0.5 + 0.5 * sin(fragPos.z * 0.85);
+        baseColor = clamp(baseColor + vec3(bladeNoise * 0.55, bladeNoise, bladeNoise * 0.35), 0.0, 1.0);
+        baseColor = mix(baseColor, baseColor * vec3(0.92, 1.08, 0.88), stripe * 0.20);
+    } else if (materialMode == 6) {
+        float grain = 0.035 * sin(fragPos.x * 0.9) + 0.025 * sin(fragPos.z * 1.3);
+        float blockLineY = smoothstep(0.00, 0.018, fract(fragPos.y * 1.35)) *
+                           (1.0 - smoothstep(0.040, 0.075, fract(fragPos.y * 1.35)));
+        float blockLineX = smoothstep(0.00, 0.016, fract(fragPos.x * 0.33)) *
+                           (1.0 - smoothstep(0.035, 0.070, fract(fragPos.x * 0.33)));
+        baseColor = clamp(baseColor + vec3(grain), 0.0, 1.0);
+        baseColor = mix(baseColor, baseColor * 0.70, clamp(blockLineY + blockLineX * 0.35, 0.0, 1.0) * 0.35);
+    } else if (hasTexture) {
         // Linearize sRGB texture for correct lighting
         vec3 texel = texture(diffuseMap, fragUV).rgb;
         texel = pow(texel, vec3(2.2));
