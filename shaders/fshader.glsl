@@ -7,10 +7,12 @@ in vec2 fragUV;
 uniform vec3 objectColor;
 uniform vec3 lightDir;     // direction TO the light (normalized)
 uniform vec3 lightColor;
+uniform vec3 ambientTint;
 uniform vec3 viewPos;
 uniform sampler2D diffuseMap;
 uniform bool hasTexture;
-uniform int materialMode;  // 0 = plain, 1 = facade, 2 = roof, 3 = road/path, 4 = rectorate facade, 5 = grass, 6 = stone
+uniform int materialMode;  // 0 = plain, 1 = facade, 2 = roof, 3 = road/path, 4 = rectorate facade, 5 = grass, 6 = stone, 11 = water, 12 = stair stone, 13 = fence, 14 = foliage, 15 = trunk
+uniform float nightBlend;
 
 out vec4 fColor;
 
@@ -50,10 +52,13 @@ void main()
 
     // Ambient
     float ambientStrength = 0.20;
-    vec3 ambient = ambientStrength * lightColor;
+    vec3 skyAmbient = mix(ambientTint * 0.58, ambientTint * 1.10, norm.y * 0.5 + 0.5);
+    vec3 groundBounce = vec3(0.18, 0.15, 0.12) * (0.5 - 0.5 * norm.y);
+    vec3 ambient = ambientStrength * (skyAmbient + groundBounce);
 
     // Diffuse
     float diff = max(dot(norm, lightDir), 0.0);
+    diff = smoothstep(0.0, 1.0, diff);
     vec3 diffuse = diff * lightColor;
 
     // Specular (Blinn-Phong) — lower strength for textured surfaces (terrain)
@@ -62,7 +67,7 @@ void main()
     float specStrength = hasTexture ? 0.08 : 0.3;
     float shininess   = hasTexture ? 16.0 : 64.0;
     float spec = pow(max(dot(norm, halfDir), 0.0), shininess);
-    vec3 specular = specStrength * spec * lightColor;
+    vec3 specular = specStrength * spec * lightColor * mix(1.0, 0.72, nightBlend);
 
     vec3 baseColor = objectColor;
     if (materialMode == 4 && abs(norm.y) < 0.55) {
@@ -127,33 +132,40 @@ void main()
                            (1.0 - smoothstep(0.035, 0.070, fract(fragPos.x * 0.33)));
         baseColor = clamp(baseColor + vec3(grain), 0.0, 1.0);
         baseColor = mix(baseColor, baseColor * 0.70, clamp(blockLineY + blockLineX * 0.35, 0.0, 1.0) * 0.35);
+    } else if (materialMode == 11) {
+        float ripple = 0.5 + 0.5 * sin(fragPos.x * 3.4 + fragPos.z * 2.8);
+        float shimmer = 0.5 + 0.5 * sin(fragPos.z * 4.7 - fragPos.x * 2.1);
+        vec3 deep = baseColor * vec3(0.62, 0.88, 1.10);
+        vec3 bright = vec3(0.56, 0.80, 0.96);
+        baseColor = mix(deep, bright, ripple * 0.40 + shimmer * 0.20);
+    } else if (materialMode == 12) {
+        float grain = 0.045 * sin(fragPos.x * 1.2) + 0.030 * sin(fragPos.z * 1.6);
+        float seamY = smoothstep(0.00, 0.020, fract(fragPos.y * 1.10)) *
+                      (1.0 - smoothstep(0.035, 0.080, fract(fragPos.y * 1.10)));
+        float seamX = smoothstep(0.00, 0.018, fract((fragPos.x + fragPos.z) * 0.18)) *
+                      (1.0 - smoothstep(0.040, 0.090, fract((fragPos.x + fragPos.z) * 0.18)));
+        float edgeLight = pow(max(dot(norm, normalize(vec3(-0.30, 0.90, 0.40))), 0.0), 2.0);
+        baseColor = clamp(baseColor + vec3(grain), 0.0, 1.0);
+        baseColor = mix(baseColor, baseColor * 0.62, clamp(seamY + seamX, 0.0, 1.0) * 0.45);
+        baseColor += vec3(0.10, 0.08, 0.06) * edgeLight;
+    } else if (materialMode == 13) {
+        float meshX = abs(fract(fragPos.x * 2.6) - 0.5);
+        float meshY = abs(fract(fragPos.y * 3.0) - 0.5);
+        float wire = 1.0 - smoothstep(0.18, 0.26, min(meshX, meshY));
+        baseColor = mix(baseColor * 0.45, baseColor * 1.18, wire);
+    } else if (materialMode == 14) {
+        float leafNoise = 0.06 * sin(fragPos.x * 1.6) + 0.05 * sin(fragPos.z * 1.4) + 0.03 * sin(fragPos.y * 2.1);
+        float sunKiss = pow(max(dot(norm, normalize(vec3(-0.25, 0.95, 0.30))), 0.0), 1.4);
+        baseColor = clamp(baseColor + vec3(leafNoise * 0.4, leafNoise, leafNoise * 0.25), 0.0, 1.0);
+        baseColor = mix(baseColor, baseColor * vec3(1.12, 1.16, 0.92), sunKiss * 0.24);
+    } else if (materialMode == 15) {
+        float bark = 0.06 * sin(fragPos.y * 4.5) + 0.03 * sin((fragPos.x + fragPos.z) * 3.2);
+        baseColor = clamp(baseColor + vec3(bark * 0.55, bark * 0.35, bark * 0.18), 0.0, 1.0);
     } else if (hasTexture) {
         // Linearize sRGB texture for correct lighting
         vec3 texel = texture(diffuseMap, fragUV).rgb;
         texel = pow(texel, vec3(2.2));
         baseColor *= texel;
-    } else if (materialMode == 1 && abs(norm.y) < 0.55) {
-        float facadeU = (abs(norm.x) > abs(norm.z)) ? fragPos.z : fragPos.x;
-        float floorCoord = fract(fragPos.y * 0.34);
-        float bayCoord = fract(facadeU * 0.105);
-
-        float floorSlab = smoothstep(0.00, 0.035, floorCoord) *
-                          (1.0 - smoothstep(0.075, 0.12, floorCoord));
-        float verticalMullion = smoothstep(0.00, 0.025, bayCoord) *
-                                (1.0 - smoothstep(0.055, 0.095, bayCoord));
-        float windowX = smoothstep(0.25, 0.31, bayCoord) *
-                        (1.0 - smoothstep(0.72, 0.78, bayCoord));
-        float windowY = smoothstep(0.36, 0.42, floorCoord) *
-                        (1.0 - smoothstep(0.72, 0.80, floorCoord));
-        float windowMask = windowX * windowY;
-
-        vec3 slabColor = baseColor * 0.78;
-        vec3 mullionColor = baseColor * 0.82;
-        vec3 glassColor = vec3(0.10, 0.13, 0.15);
-
-        baseColor = mix(baseColor, slabColor, floorSlab * 0.65);
-        baseColor = mix(baseColor, mullionColor, verticalMullion * 0.35);
-        baseColor = mix(baseColor, glassColor, windowMask * 0.58);
     } else if (materialMode == 2) {
         vec2 roofUV = vec2(fragPos.x * 0.28, fragPos.z * 0.16);
         float row = fract(roofUV.y);
@@ -172,7 +184,13 @@ void main()
         baseColor = clamp(clay, 0.0, 1.0);
     } else if (materialMode == 3) {
         float paving = 0.04 * sin(fragPos.x * 0.35) * sin(fragPos.z * 0.35);
-        baseColor = clamp(baseColor + vec3(paving), 0.0, 1.0);
+        float seamX = smoothstep(0.00, 0.035, fract(fragPos.x * 0.24)) *
+                      (1.0 - smoothstep(0.055, 0.11, fract(fragPos.x * 0.24)));
+        float seamZ = smoothstep(0.00, 0.035, fract(fragPos.z * 0.24)) *
+                      (1.0 - smoothstep(0.055, 0.11, fract(fragPos.z * 0.24)));
+        float dust = 0.03 * sin(fragPos.x * 0.07 + fragPos.z * 0.09);
+        baseColor = clamp(baseColor + vec3(paving + dust), 0.0, 1.0);
+        baseColor = mix(baseColor, baseColor * 0.72, clamp(seamX + seamZ * 0.8, 0.0, 1.0) * 0.22);
     }
 
     vec3 result = (ambient + diffuse + specular) * baseColor;

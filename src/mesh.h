@@ -19,7 +19,11 @@ struct Mesh {
     GLsizei indexCount = 0;
     GLuint diffuseTex = 0;
     glm::vec3 baseColor = glm::vec3(1.0f);
-    int materialMode = 0;  // 0 = plain, 1 = facade, 2 = roof, 3 = road/path, 4 = rectorate facade, 5 = grass, 6 = stone
+    glm::vec3 bboxMin = glm::vec3(0.0f);
+    glm::vec3 bboxMax = glm::vec3(0.0f);
+    glm::vec3 boundsCenter = glm::vec3(0.0f);
+    float boundsRadius = 0.0f;
+    int materialMode = 0;  // 0 = plain, 1 = facade, 2 = roof, 3 = road/path, 4 = rectorate facade, 5 = grass, 6 = stone, 11 = water, 12 = stair stone, 13 = fence, 14 = foliage, 15 = trunk
 };
 
 struct TerrainTriangle {
@@ -39,6 +43,8 @@ struct Model {
     std::vector<Mesh> meshes;
     std::vector<TerrainTriangle> walkSurface;
     std::vector<ObstacleAABB> obstacles;
+    std::vector<glm::vec3> roadPoints;
+    std::vector<glm::vec3> perimeterPoints;
     glm::vec3 bboxMin = glm::vec3(0.0f);
     glm::vec3 bboxMax = glm::vec3(0.0f);
     bool sceneHasTerrain = false;
