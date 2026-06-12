@@ -5,6 +5,8 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -27,14 +29,26 @@ const int HEIGHT = 720;
 // ---------------------------------------------------------------------------
 Camera camera(glm::vec3(0.0f, 1.7f, 8.0f));
 GLuint shaderProgram = 0;
+GLuint skyboxProgram = 0;
+GLuint overlayProgram = 0;
 GLuint groundVAO = 0;
+GLuint skyboxVAO = 0;
+GLuint hudVAO = 0;
+GLuint hudVBO = 0;
 GLuint fallbackWhiteTex = 0;
+GLuint skyboxCubemap = 0;
 Model campusModel;
 Model odeonModel;
 Model clockTowerModel;
 glm::mat4 sceneRootTransform(1.0f);
 float sceneScale = 1.0f;
 float farPlane = 2000.0f;
+int framebufferWidth = WIDTH;
+int framebufferHeight = HEIGHT;
+bool nightMode = false;
+bool showMinimap = true;
+std::size_t lastVisibleMeshes = 0;
+std::size_t lastCulledMeshes = 0;
 
 float lastX = WIDTH / 2.0f;
 float lastY = HEIGHT / 2.0f;
@@ -54,6 +68,22 @@ float groundVertices[] = {
     -500.0f, 0.0f, -500.0f,   0, 1, 0,      0, 1,
     -500.0f, 0.0f,  500.0f,   0, 1, 0,      0, 0,
 };
+
+float skyboxVertices[] = {
+    -1.0f,  1.0f, -1.0f,  -1.0f, -1.0f, -1.0f,   1.0f, -1.0f, -1.0f,
+     1.0f, -1.0f, -1.0f,   1.0f,  1.0f, -1.0f,  -1.0f,  1.0f, -1.0f,
+    -1.0f, -1.0f,  1.0f,  -1.0f, -1.0f, -1.0f,  -1.0f,  1.0f, -1.0f,
+    -1.0f,  1.0f, -1.0f,  -1.0f,  1.0f,  1.0f,  -1.0f, -1.0f,  1.0f,
+     1.0f, -1.0f, -1.0f,   1.0f, -1.0f,  1.0f,   1.0f,  1.0f,  1.0f,
+     1.0f,  1.0f,  1.0f,   1.0f,  1.0f, -1.0f,   1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f,  1.0f,  -1.0f,  1.0f,  1.0f,   1.0f,  1.0f,  1.0f,
+     1.0f,  1.0f,  1.0f,   1.0f, -1.0f,  1.0f,  -1.0f, -1.0f,  1.0f,
+    -1.0f,  1.0f, -1.0f,   1.0f,  1.0f, -1.0f,   1.0f,  1.0f,  1.0f,
+     1.0f,  1.0f,  1.0f,  -1.0f,  1.0f,  1.0f,  -1.0f,  1.0f, -1.0f,
+    -1.0f, -1.0f, -1.0f,  -1.0f, -1.0f,  1.0f,   1.0f, -1.0f, -1.0f,
+     1.0f, -1.0f, -1.0f,  -1.0f, -1.0f,  1.0f,   1.0f, -1.0f,  1.0f
+};
+
 
 // ---------------------------------------------------------------------------
 // Callbacks
@@ -76,6 +106,8 @@ void mouseCallback(GLFWwindow* /*window*/, double xpos, double ypos)
 
 void framebufferSizeCallback(GLFWwindow* /*window*/, int width, int height)
 {
+    framebufferWidth = std::max(width, 1);
+    framebufferHeight = std::max(height, 1);
     glViewport(0, 0, width, height);
 }
 
@@ -104,6 +136,37 @@ static GLuint createVAO(const float* data, size_t size)
     return vao;
 }
 
+static GLuint createPositionOnlyVAO(const float* data, size_t size)
+{
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, size, data, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glBindVertexArray(0);
+    return vao;
+}
+
+static GLuint createDynamicHudBuffer()
+{
+    glGenVertexArrays(1, &hudVAO);
+    glGenBuffers(1, &hudVBO);
+    glBindVertexArray(hudVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, hudVBO);
+    glBufferData(GL_ARRAY_BUFFER, 4096 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(2 * sizeof(float)));
+    glBindVertexArray(0);
+    return hudVAO;
+}
+
 static void setUniform(GLuint prog, const char* name, const glm::mat4& m)
 {
     glUniformMatrix4fv(glGetUniformLocation(prog, name), 1, GL_FALSE, glm::value_ptr(m));
@@ -119,17 +182,50 @@ static void setUniform(GLuint prog, const char* name, int value)
     glUniform1i(glGetUniformLocation(prog, name), value);
 }
 
+static void setUniform(GLuint prog, const char* name, float value)
+{
+    glUniform1f(glGetUniformLocation(prog, name), value);
+}
+
 struct LandmarkView {
     const char* name;
+    const char* shortLabel;
     glm::vec3 position;
     float yaw;
     float pitch;
+    glm::vec3 color;
 };
 
 static const LandmarkView LANDMARKS[] = {
-    {"Rectorate", glm::vec3(-2.0f, 112.0f, 188.0f), -82.0f, -13.0f},
-    {"Library", glm::vec3(-116.0f, 116.0f, 102.0f), -28.0f, -10.0f},
-    {"Student Center", glm::vec3(72.0f, 112.0f, -62.0f), -142.0f, -11.0f},
+    {"Rectorate", "REC", glm::vec3(-2.0f, 112.0f, 188.0f), -82.0f, -13.0f, glm::vec3(0.95f, 0.77f, 0.31f)},
+    {"Library", "LIB", glm::vec3(-116.0f, 116.0f, 102.0f), -28.0f, -10.0f, glm::vec3(0.38f, 0.78f, 0.96f)},
+    {"Student Center", "SC", glm::vec3(72.0f, 112.0f, -62.0f), -142.0f, -11.0f, glm::vec3(0.94f, 0.52f, 0.34f)},
+};
+
+struct FrustumPlane {
+    glm::vec3 normal;
+    float d = 0.0f;
+};
+
+struct LightPreset {
+    glm::vec3 direction;
+    glm::vec3 color;
+    glm::vec3 ambientTint;
+    glm::vec3 skyTint;
+};
+
+static const LightPreset DAY_PRESET = {
+    glm::normalize(glm::vec3(-0.35f, 0.85f, 0.45f)),
+    glm::vec3(1.00f, 0.96f, 0.88f),
+    glm::vec3(0.86f, 0.88f, 0.84f),
+    glm::vec3(0.68f, 0.84f, 0.95f)
+};
+
+static const LightPreset NIGHT_PRESET = {
+    glm::normalize(glm::vec3(0.28f, 0.42f, -0.86f)),
+    glm::vec3(0.26f, 0.34f, 0.48f),
+    glm::vec3(0.34f, 0.39f, 0.50f),
+    glm::vec3(0.05f, 0.08f, 0.15f)
 };
 
 static void jumpToLandmark(int index)
@@ -224,6 +320,196 @@ static GLuint createFallbackWhiteTexture()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
     return tex;
+}
+
+static GLuint createProceduralSkyboxCubemap()
+{
+    auto encode = [](float v) -> unsigned char {
+        const float srgb = std::pow(glm::clamp(v, 0.0f, 1.0f), 1.0f / 2.2f);
+        return static_cast<unsigned char>(glm::clamp(srgb * 255.0f, 0.0f, 255.0f));
+    };
+
+    const int size = 64;
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+
+    const std::array<glm::vec3, 6> faceDirs = {{
+        glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 0.0f, -1.0f)
+    }};
+    const std::array<glm::vec3, 6> faceUps = {{
+        glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 0.0f, -1.0f),
+        glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)
+    }};
+
+    for (int face = 0; face < 6; ++face) {
+        std::vector<unsigned char> pixels(size * size * 3);
+        const glm::vec3 forward = faceDirs[face];
+        const glm::vec3 up = faceUps[face];
+        const glm::vec3 right = glm::normalize(glm::cross(forward, up));
+
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x) {
+                const float u = (2.0f * (static_cast<float>(x) + 0.5f) / static_cast<float>(size)) - 1.0f;
+                const float v = (2.0f * (static_cast<float>(y) + 0.5f) / static_cast<float>(size)) - 1.0f;
+                const glm::vec3 dir = glm::normalize(forward + right * u + up * v);
+
+                const float horizon = glm::clamp(dir.y * 0.5f + 0.5f, 0.0f, 1.0f);
+                glm::vec3 dayColor = glm::mix(glm::vec3(0.78f, 0.84f, 0.91f),
+                                              glm::vec3(0.22f, 0.48f, 0.92f),
+                                              std::pow(horizon, 0.65f));
+                dayColor += glm::vec3(0.30f, 0.20f, 0.08f) *
+                            std::pow(glm::max(glm::dot(dir, DAY_PRESET.direction), 0.0f), 96.0f);
+
+                glm::vec3 nightColor = glm::mix(glm::vec3(0.02f, 0.03f, 0.08f),
+                                                glm::vec3(0.05f, 0.12f, 0.22f),
+                                                std::pow(horizon, 1.4f));
+                nightColor += glm::vec3(0.28f, 0.33f, 0.42f) *
+                              std::pow(glm::max(glm::dot(dir, NIGHT_PRESET.direction), 0.0f), 88.0f);
+
+                glm::vec3 color = glm::clamp(glm::max(dayColor, nightColor), 0.0f, 1.0f);
+                const std::size_t idx = static_cast<std::size_t>(y * size + x) * 3;
+                pixels[idx + 0] = encode(color.r);
+                pixels[idx + 1] = encode(color.g);
+                pixels[idx + 2] = encode(color.b);
+            }
+        }
+
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_RGB, size, size, 0,
+                     GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+    }
+
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+    return tex;
+}
+
+static std::array<FrustumPlane, 6> extractFrustumPlanes(const glm::mat4& m)
+{
+    std::array<FrustumPlane, 6> planes;
+    const glm::mat4 t = glm::transpose(m);
+    const glm::vec4 rows[4] = {t[0], t[1], t[2], t[3]};
+
+    const glm::vec4 combos[6] = {
+        rows[3] + rows[0], rows[3] - rows[0],
+        rows[3] + rows[1], rows[3] - rows[1],
+        rows[3] + rows[2], rows[3] - rows[2]
+    };
+
+    for (int i = 0; i < 6; ++i) {
+        const glm::vec3 n(combos[i].x, combos[i].y, combos[i].z);
+        const float invLen = 1.0f / glm::max(glm::length(n), 1e-5f);
+        planes[i].normal = n * invLen;
+        planes[i].d = combos[i].w * invLen;
+    }
+    return planes;
+}
+
+static bool sphereVisible(const std::array<FrustumPlane, 6>& planes, const glm::vec3& center, float radius)
+{
+    for (const auto& plane : planes) {
+        if (glm::dot(plane.normal, center) + plane.d < -radius) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void pushHudQuad(std::vector<float>& verts,
+                        float x0, float y0, float x1, float y1,
+                        const glm::vec3& color)
+{
+    const float quad[] = {
+        x0, y0, color.r, color.g, color.b,
+        x1, y0, color.r, color.g, color.b,
+        x1, y1, color.r, color.g, color.b,
+        x0, y0, color.r, color.g, color.b,
+        x1, y1, color.r, color.g, color.b,
+        x0, y1, color.r, color.g, color.b
+    };
+    verts.insert(verts.end(), std::begin(quad), std::end(quad));
+}
+
+static const std::array<const char*, 7>* glyphPattern(char c)
+{
+    static const std::array<const char*, 7> A = {"01110","10001","10001","11111","10001","10001","10001"};
+    static const std::array<const char*, 7> B = {"11110","10001","10001","11110","10001","10001","11110"};
+    static const std::array<const char*, 7> C = {"01111","10000","10000","10000","10000","10000","01111"};
+    static const std::array<const char*, 7> D = {"11110","10001","10001","10001","10001","10001","11110"};
+    static const std::array<const char*, 7> E = {"11111","10000","10000","11110","10000","10000","11111"};
+    static const std::array<const char*, 7> G = {"01111","10000","10000","10111","10001","10001","01111"};
+    static const std::array<const char*, 7> H = {"10001","10001","10001","11111","10001","10001","10001"};
+    static const std::array<const char*, 7> I = {"11111","00100","00100","00100","00100","00100","11111"};
+    static const std::array<const char*, 7> L = {"10000","10000","10000","10000","10000","10000","11111"};
+    static const std::array<const char*, 7> M = {"10001","11011","10101","10001","10001","10001","10001"};
+    static const std::array<const char*, 7> N = {"10001","11001","10101","10011","10001","10001","10001"};
+    static const std::array<const char*, 7> R = {"11110","10001","10001","11110","10100","10010","10001"};
+    static const std::array<const char*, 7> S = {"01111","10000","10000","01110","00001","00001","11110"};
+    static const std::array<const char*, 7> T = {"11111","00100","00100","00100","00100","00100","00100"};
+    static const std::array<const char*, 7> U = {"10001","10001","10001","10001","10001","10001","01110"};
+    static const std::array<const char*, 7> V = {"10001","10001","10001","10001","10001","01010","00100"};
+    static const std::array<const char*, 7> Y = {"10001","10001","01010","00100","00100","00100","00100"};
+    static const std::array<const char*, 7> K = {"10001","10010","10100","11000","10100","10010","10001"};
+    static const std::array<const char*, 7> P = {"11110","10001","10001","11110","10000","10000","10000"};
+    static const std::array<const char*, 7> SPACE = {"00000","00000","00000","00000","00000","00000","00000"};
+
+    switch (c) {
+        case 'A': return &A; case 'B': return &B; case 'C': return &C; case 'D': return &D;
+        case 'E': return &E; case 'G': return &G; case 'H': return &H; case 'I': return &I;
+        case 'K': return &K; case 'L': return &L; case 'M': return &M; case 'N': return &N;
+        case 'P': return &P; case 'R': return &R; case 'S': return &S; case 'T': return &T;
+        case 'U': return &U; case 'V': return &V; case 'Y': return &Y; case ' ': return &SPACE;
+        default: return nullptr;
+    }
+}
+
+static void pushHudText(std::vector<float>& verts,
+                        float x,
+                        float y,
+                        const std::string& text,
+                        float scale,
+                        const glm::vec3& color)
+{
+    float cursor = x;
+    for (char raw : text) {
+        const char c = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
+        const auto* glyph = glyphPattern(c);
+        if (!glyph) {
+            cursor += scale * 6.0f;
+            continue;
+        }
+        for (int row = 0; row < 7; ++row) {
+            for (int col = 0; col < 5; ++col) {
+                if ((*glyph)[row][col] != '1') {
+                    continue;
+                }
+                const float x0 = cursor + static_cast<float>(col) * scale;
+                const float y0 = y + static_cast<float>(row) * scale;
+                pushHudQuad(verts, x0, y0, x0 + scale, y0 + scale, color);
+            }
+        }
+        cursor += scale * 6.0f;
+    }
+}
+
+static void drawHudQuads(const std::vector<float>& verts)
+{
+    if (verts.empty()) {
+        return;
+    }
+    glUseProgram(overlayProgram);
+    glBindVertexArray(hudVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, hudVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(verts.size() * sizeof(float)), verts.data());
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(verts.size() / 5));
+    glBindVertexArray(0);
 }
 
 static void orientCameraToward(const glm::vec3& target)
@@ -426,7 +712,11 @@ static bool findGuaranteedSpawn(glm::vec3& outWorldPos)
 void init()
 {
     shaderProgram = loadShaders("shaders/vshader.glsl", "shaders/fshader.glsl");
+    skyboxProgram = loadShaders("shaders/skybox_vshader.glsl", "shaders/skybox_fshader.glsl");
+    overlayProgram = loadShaders("shaders/overlay_vshader.glsl", "shaders/overlay_fshader.glsl");
     groundVAO = createVAO(groundVertices, sizeof(groundVertices));
+    skyboxVAO = createPositionOnlyVAO(skyboxVertices, sizeof(skyboxVertices));
+    createDynamicHudBuffer();
 
     const std::string scenePath = resolveScenePath();
     if (scenePath.empty()) {
@@ -521,19 +811,36 @@ void init()
     std::cout << "Camera yaw/pitch: (" << camera.yaw << ", " << camera.pitch << ")" << std::endl;
 
     glEnable(GL_DEPTH_TEST);
-    // Pre-linearize the sky color so it matches the gamma-corrected scene output
-    glClearColor(powf(0.60f, 2.2f), powf(0.78f, 2.2f), powf(0.88f, 2.2f), 1.0f);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glClearColor(0.02f, 0.03f, 0.05f, 1.0f);
     fallbackWhiteTex = createFallbackWhiteTexture();
+    skyboxCubemap = createProceduralSkyboxCubemap();
 
     glUseProgram(shaderProgram);
     setUniform(shaderProgram, "diffuseMap", 0);
     setUniform(shaderProgram, "hasTexture", 0);
     setUniform(shaderProgram, "materialMode", 0);
+
+    glUseProgram(skyboxProgram);
+    setUniform(skyboxProgram, "skybox", 0);
 }
 
 static void drawModel(const Model& model)
 {
+    const glm::mat4 view = camera.viewMatrix();
+    const glm::mat4 projection = glm::perspective(glm::radians(60.0f),
+                                                  static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight),
+                                                  0.1f, farPlane);
+    const std::array<FrustumPlane, 6> frustum = extractFrustumPlanes(projection * view * sceneRootTransform);
+
     for (const auto& mesh : model.meshes) {
+        if (mesh.boundsRadius > 0.0f &&
+            !sphereVisible(frustum, mesh.boundsCenter, mesh.boundsRadius)) {
+            ++lastCulledMeshes;
+            continue;
+        }
+        ++lastVisibleMeshes;
         if (mesh.diffuseTex != 0) {
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, mesh.diffuseTex);
@@ -550,22 +857,127 @@ static void drawModel(const Model& model)
     }
 }
 
+static void drawSkybox(const glm::mat4& view, const glm::mat4& projection, const LightPreset& lightPreset)
+{
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(skyboxProgram);
+    const glm::mat4 skyView = glm::mat4(glm::mat3(view));
+    setUniform(skyboxProgram, "view", skyView);
+    setUniform(skyboxProgram, "projection", projection);
+    setUniform(skyboxProgram, "blendFactor", nightMode ? 1.0f : 0.0f);
+    setUniform(skyboxProgram, "skyTint", lightPreset.skyTint);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxCubemap);
+    glBindVertexArray(skyboxVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    glBindVertexArray(0);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+}
+
+static void drawHud(const glm::mat4& view, const glm::mat4& projection)
+{
+    std::vector<float> verts;
+    verts.reserve(1024);
+
+    if (showMinimap) {
+        const float mapSize = 170.0f;
+        const float margin = 18.0f;
+        const float x0 = margin;
+        const float y0 = static_cast<float>(framebufferHeight) - mapSize - margin;
+        const float x1 = x0 + mapSize;
+        const float y1 = y0 + mapSize;
+
+        pushHudQuad(verts, x0, y0, x1, y1, nightMode ? glm::vec3(0.07f, 0.10f, 0.14f)
+                                                      : glm::vec3(0.90f, 0.93f, 0.88f));
+        pushHudQuad(verts, x0 + 4.0f, y0 + 4.0f, x1 - 4.0f, y1 - 4.0f,
+                    nightMode ? glm::vec3(0.11f, 0.14f, 0.18f) : glm::vec3(0.80f, 0.82f, 0.76f));
+
+        const glm::vec3 min = campusModel.bboxMin * sceneScale;
+        const glm::vec3 max = campusModel.bboxMax * sceneScale;
+        const float spanX = glm::max(max.x - min.x, 1.0f);
+        const float spanZ = glm::max(max.z - min.z, 1.0f);
+        const auto mapPoint = [&](const glm::vec3& p) {
+            const float nx = (p.x - min.x) / spanX;
+            const float nz = (p.z - min.z) / spanZ;
+            return glm::vec2(x0 + 8.0f + nx * (mapSize - 16.0f),
+                             y1 - 8.0f - nz * (mapSize - 16.0f));
+        };
+
+        for (const auto& landmark : LANDMARKS) {
+            const glm::vec2 pt = mapPoint(landmark.position * sceneScale);
+            pushHudQuad(verts, pt.x - 3.0f, pt.y - 3.0f, pt.x + 3.0f, pt.y + 3.0f, landmark.color);
+            pushHudText(verts, pt.x + 6.0f, pt.y - 6.0f, landmark.shortLabel, 1.5f, landmark.color);
+        }
+
+        const glm::vec2 camPt = mapPoint(camera.position);
+        pushHudQuad(verts, camPt.x - 4.0f, camPt.y - 4.0f, camPt.x + 4.0f, camPt.y + 4.0f,
+                    glm::vec3(0.98f, 0.96f, 0.92f));
+        const glm::vec3 camFront = camera.front();
+        glm::vec2 flatDir(camFront.x, -camFront.z);
+        if (glm::length(flatDir) > 1e-4f) {
+            flatDir = glm::normalize(flatDir) * 10.0f;
+            pushHudQuad(verts, camPt.x + flatDir.x - 2.0f, camPt.y + flatDir.y - 2.0f,
+                        camPt.x + flatDir.x + 2.0f, camPt.y + flatDir.y + 2.0f, glm::vec3(0.98f, 0.72f, 0.28f));
+        }
+    }
+
+    for (const auto& landmark : LANDMARKS) {
+        const glm::vec4 clip = projection * view * glm::vec4(landmark.position * sceneScale, 1.0f);
+        if (clip.w <= 0.0f) {
+            continue;
+        }
+        const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+        if (ndc.z < -1.0f || ndc.z > 1.0f || std::abs(ndc.x) > 1.05f || std::abs(ndc.y) > 1.05f) {
+            continue;
+        }
+
+        const float screenX = (ndc.x * 0.5f + 0.5f) * static_cast<float>(framebufferWidth);
+        const float screenY = (1.0f - (ndc.y * 0.5f + 0.5f)) * static_cast<float>(framebufferHeight);
+        pushHudQuad(verts, screenX - 8.0f, screenY - 22.0f, screenX + 8.0f, screenY - 6.0f, landmark.color);
+        pushHudQuad(verts, screenX - 2.0f, screenY - 6.0f, screenX + 2.0f, screenY + 8.0f, landmark.color * 0.85f);
+        pushHudText(verts, screenX + 12.0f, screenY - 20.0f, landmark.shortLabel, 2.0f, landmark.color);
+    }
+
+    const glm::vec3 statusColor = nightMode ? glm::vec3(0.82f, 0.88f, 0.98f) : glm::vec3(0.16f, 0.21f, 0.28f);
+    const std::string modeText = nightMode ? "NIGHT" : "DAY";
+    pushHudText(verts, static_cast<float>(framebufferWidth) - 100.0f, 18.0f, modeText, 2.0f, statusColor);
+    if (showMinimap) {
+        pushHudText(verts, 24.0f, static_cast<float>(framebufferHeight) - 28.0f, "MAP", 1.7f,
+                    nightMode ? glm::vec3(0.84f, 0.89f, 0.97f) : glm::vec3(0.18f, 0.20f, 0.18f));
+    }
+
+    glDisable(GL_DEPTH_TEST);
+    glUseProgram(overlayProgram);
+    glUniform2f(glGetUniformLocation(overlayProgram, "viewportSize"),
+                static_cast<float>(framebufferWidth), static_cast<float>(framebufferHeight));
+    drawHudQuads(verts);
+    glEnable(GL_DEPTH_TEST);
+}
+
+
 void display()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    const glm::mat4 view = camera.viewMatrix();
+    const glm::mat4 projection = glm::perspective(glm::radians(60.0f),
+                                                  static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight),
+                                                  0.1f, farPlane);
+    const LightPreset& lightPreset = nightMode ? NIGHT_PRESET : DAY_PRESET;
+
+    drawSkybox(view, projection, lightPreset);
+
     glUseProgram(shaderProgram);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, fallbackWhiteTex);
-
-    const glm::mat4 view = camera.viewMatrix();
-    const glm::mat4 projection = glm::perspective(glm::radians(60.0f),
-                                                  static_cast<float>(WIDTH) / static_cast<float>(HEIGHT),
-                                                  0.1f, farPlane);
     setUniform(shaderProgram, "view", view);
     setUniform(shaderProgram, "projection", projection);
     setUniform(shaderProgram, "viewPos", camera.position);
-    setUniform(shaderProgram, "lightDir", glm::normalize(glm::vec3(-0.35f, 0.85f, 0.45f)));
-    setUniform(shaderProgram, "lightColor", glm::vec3(0.92f, 0.90f, 0.84f));
+    setUniform(shaderProgram, "lightDir", lightPreset.direction);
+    setUniform(shaderProgram, "lightColor", lightPreset.color);
+    setUniform(shaderProgram, "ambientTint", lightPreset.ambientTint);
+    setUniform(shaderProgram, "nightBlend", nightMode ? 1.0f : 0.0f);
 
     if (!campusModel.sceneHasTerrain) {
         setUniform(shaderProgram, "model", glm::mat4(1.0f));
@@ -577,10 +989,14 @@ void display()
     }
 
     setUniform(shaderProgram, "model", sceneRootTransform);
+    lastVisibleMeshes = 0;
+    lastCulledMeshes = 0;
     drawModel(campusModel);
     drawModel(odeonModel);
     drawModel(clockTowerModel);
     glBindVertexArray(0);
+
+    drawHud(view, projection);
 }
 
 // ---------------------------------------------------------------------------
@@ -588,6 +1004,8 @@ void display()
 // ---------------------------------------------------------------------------
 static bool flyKeyWasPressed = false;
 static bool probeKeyWasPressed = false;
+static bool nightKeyWasPressed = false;
+static bool minimapKeyWasPressed = false;
 static bool landmarkKeyWasPressed[3] = {false, false, false};
 
 void processInput(GLFWwindow* window)
@@ -609,6 +1027,20 @@ void processInput(GLFWwindow* window)
         printCameraProbe();
     }
     probeKeyWasPressed = probeKeyDown;
+
+    const bool nightKeyDown = glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS;
+    if (nightKeyDown && !nightKeyWasPressed) {
+        nightMode = !nightMode;
+        std::cout << (nightMode ? "Night mode ON" : "Night mode OFF") << std::endl;
+    }
+    nightKeyWasPressed = nightKeyDown;
+
+    const bool minimapKeyDown = glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS;
+    if (minimapKeyDown && !minimapKeyWasPressed) {
+        showMinimap = !showMinimap;
+        std::cout << (showMinimap ? "Minimap ON" : "Minimap OFF") << std::endl;
+    }
+    minimapKeyWasPressed = minimapKeyDown;
 
     const int landmarkKeys[3] = {GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3};
     for (int i = 0; i < 3; ++i) {
@@ -736,7 +1168,7 @@ int main()
     }
 
     std::cout << "OpenGL " << glGetString(GL_VERSION) << std::endl;
-    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, F = fly mode, Space/C = up/down (fly), P = print camera probe, 1/2/3 = landmarks, ESC = quit" << std::endl;
+    std::cout << "Controls: WASD = move, Mouse = look, Shift = sprint, Alt = turbo, F = fly mode, Space/C = up/down (fly), N = day/night, M = minimap, P = print camera probe, 1/2/3 = landmarks, ESC = quit" << std::endl;
 
     init();
 

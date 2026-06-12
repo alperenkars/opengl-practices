@@ -15,6 +15,8 @@ An interactive 3D virtual tour of Koç University campus built with C++ and Open
 | Left Alt | Turbo sprint |
 | F | Toggle fly mode |
 | Space / C | Move up/down in fly mode |
+| N | Toggle day / night lighting |
+| M | Toggle minimap HUD |
 | 1 / 2 / 3 | Jump to Rectorate / Library / Student Center demo views |
 | ESC | Quit |
 
@@ -46,3 +48,4 @@ docs/         Proposal and reports
 - Campus/building scenes are imported at runtime from exported mesh files (OBJ/glTF/GLB) via Assimp.
 - Diffuse textures are loaded at runtime with stb_image.
 - Lighting stays in our GLSL pipeline (ambient + diffuse + Blinn-Phong specular) and textures modulate the lit result.
+- The current demo also includes a cubemap skybox pass, simple landmark HUD markers, a corner minimap, and frustum culling on per-mesh bounds.

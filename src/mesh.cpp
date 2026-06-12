@@ -1,5 +1,7 @@
 #include "mesh.h"
 
+#include <glm/gtc/constants.hpp>
+
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
@@ -37,6 +39,15 @@ bool isWalkSurfaceName(const std::string& meshName)
            n.find("pedestrian") != std::string::npos;
 }
 
+static const glm::vec3 HENRY_P1(-124.538f, 67.4345f, 122.907f);
+static const glm::vec3 HENRY_P2(-65.1737f, 67.2052f, 125.271f);
+static const glm::vec3 HENRY_P3(-48.005f, 60.3155f, 190.264f);
+static const glm::vec3 HENRY_P4(-121.389f, 67.0113f, 186.591f);
+static constexpr float HENRY_TOP_STEP_BAND = 0.26f;
+static constexpr float HENRY_LEFT_STEP_BAND = 0.24f;
+static constexpr float HENRY_EDGE_STEP_DROP = 4.70f;
+static constexpr int HENRY_EDGE_STEPS = 10;
+
 bool isOdeonName(const std::string& meshName)
 {
     return toLower(meshName).find("odeon") != std::string::npos;
@@ -61,6 +72,11 @@ bool isPathName(const std::string& meshName)
     return n.find("pedestrian") != std::string::npos ||
            n.find("path") != std::string::npos ||
            n.find("footway") != std::string::npos;
+}
+
+bool isVegetationName(const std::string& meshName)
+{
+    return toLower(meshName).find("vegetation") != std::string::npos;
 }
 
 bool shouldSkipRenderableMesh(const std::string& meshName)
@@ -193,6 +209,9 @@ float averageNormalY(const std::vector<Vertex>& vertices)
 
 int materialModeForMesh(const std::string& meshName, const std::vector<Vertex>& vertices)
 {
+    if (isVegetationName(meshName)) {
+        return 5;
+    }
     if (isBuildingName(meshName)) {
         if (isBuildingRoof(meshName) || averageNormalY(vertices) > 0.55f) {
             return 2;
@@ -334,6 +353,442 @@ void addBox(std::vector<Vertex>& vertices,
                 glm::vec3(xMax, yMin, zMin), glm::vec3(xMin, yMin, zMin),
                 glm::vec3(0.0f, -1.0f, 0.0f));
     }
+}
+
+glm::vec3 henryFordPoint(const glm::vec3& p1,
+                         const glm::vec3& p2,
+                         const glm::vec3& p3,
+                         const glm::vec3& p4,
+                         float s,
+                         float t,
+                         float y)
+{
+    const glm::vec3 top = glm::mix(p1, p2, s);
+    const glm::vec3 bottom = glm::mix(p4, p3, s);
+    const glm::vec3 xz = glm::mix(top, bottom, t);
+    return glm::vec3(xz.x, y, xz.z);
+}
+
+void addAutoQuad(std::vector<Vertex>& vertices,
+                 std::vector<unsigned int>& indices,
+                 const glm::vec3& a,
+                 const glm::vec3& b,
+                 const glm::vec3& c,
+                 const glm::vec3& d)
+{
+    glm::vec3 normal = glm::cross(b - a, c - a);
+    normal = (glm::length(normal) > 1e-6f) ? glm::normalize(normal) : glm::vec3(0.0f, 1.0f, 0.0f);
+    addQuad(vertices, indices, a, b, c, d, normal);
+}
+
+void addHenryFordHorizontal(std::vector<Vertex>& vertices,
+                            std::vector<unsigned int>& indices,
+                            const glm::vec3& p1,
+                            const glm::vec3& p2,
+                            const glm::vec3& p3,
+                            const glm::vec3& p4,
+                            float sMin,
+                            float sMax,
+                            float tMin,
+                            float tMax,
+                            float y)
+{
+    addQuad(vertices, indices,
+            henryFordPoint(p1, p2, p3, p4, sMin, tMin, y),
+            henryFordPoint(p1, p2, p3, p4, sMax, tMin, y),
+            henryFordPoint(p1, p2, p3, p4, sMax, tMax, y),
+            henryFordPoint(p1, p2, p3, p4, sMin, tMax, y),
+            glm::vec3(0.0f, 1.0f, 0.0f));
+}
+
+void addHenryFordRiserT(std::vector<Vertex>& vertices,
+                        std::vector<unsigned int>& indices,
+                        const glm::vec3& p1,
+                        const glm::vec3& p2,
+                        const glm::vec3& p3,
+                        const glm::vec3& p4,
+                        float sMin,
+                        float sMax,
+                        float t,
+                        float yMin,
+                        float yMax)
+{
+    addAutoQuad(vertices, indices,
+                henryFordPoint(p1, p2, p3, p4, sMax, t, yMin),
+                henryFordPoint(p1, p2, p3, p4, sMin, t, yMin),
+                henryFordPoint(p1, p2, p3, p4, sMin, t, yMax),
+                henryFordPoint(p1, p2, p3, p4, sMax, t, yMax));
+}
+
+void addHenryFordRiserS(std::vector<Vertex>& vertices,
+                        std::vector<unsigned int>& indices,
+                        const glm::vec3& p1,
+                        const glm::vec3& p2,
+                        const glm::vec3& p3,
+                        const glm::vec3& p4,
+                        float s,
+                        float tMin,
+                        float tMax,
+                        float yMin,
+                        float yMax)
+{
+    addAutoQuad(vertices, indices,
+                henryFordPoint(p1, p2, p3, p4, s, tMin, yMin),
+                henryFordPoint(p1, p2, p3, p4, s, tMax, yMin),
+                henryFordPoint(p1, p2, p3, p4, s, tMax, yMax),
+                henryFordPoint(p1, p2, p3, p4, s, tMin, yMax));
+}
+
+bool pointInTriangleXZ(const glm::vec2& p, const glm::vec2& a, const glm::vec2& b, const glm::vec2& c)
+{
+    const auto sign = [](const glm::vec2& p1, const glm::vec2& p2, const glm::vec2& p3) {
+        return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+    };
+    const float d1 = sign(p, a, b);
+    const float d2 = sign(p, b, c);
+    const float d3 = sign(p, c, a);
+    const bool hasNeg = (d1 < 0.0f) || (d2 < 0.0f) || (d3 < 0.0f);
+    const bool hasPos = (d1 > 0.0f) || (d2 > 0.0f) || (d3 > 0.0f);
+    return !(hasNeg && hasPos);
+}
+
+bool pointInQuadXZ(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, const glm::vec3& d)
+{
+    const glm::vec2 q(p.x, p.z);
+    return pointInTriangleXZ(q, glm::vec2(a.x, a.z), glm::vec2(b.x, b.z), glm::vec2(c.x, c.z)) ||
+           pointInTriangleXZ(q, glm::vec2(a.x, a.z), glm::vec2(c.x, c.z), glm::vec2(d.x, d.z));
+}
+
+void applyHenryFordTerrainFlattening(const std::string& meshName, std::vector<Vertex>& vertices)
+{
+    if (!(isWalkSurfaceName(meshName) || isVegetationName(meshName))) {
+        return;
+    }
+
+    const float finalY = 67.45f - HENRY_EDGE_STEP_DROP;
+    const float sMin = HENRY_LEFT_STEP_BAND - 0.06f;
+    const float tMin = HENRY_TOP_STEP_BAND - 0.06f;
+    const float sMax = 1.04f;
+    const float tMax = 1.04f;
+    const glm::vec3 q1 = henryFordPoint(HENRY_P1, HENRY_P2, HENRY_P3, HENRY_P4, sMin, tMin, finalY);
+    const glm::vec3 q2 = henryFordPoint(HENRY_P1, HENRY_P2, HENRY_P3, HENRY_P4, sMax, tMin, finalY);
+    const glm::vec3 q3 = henryFordPoint(HENRY_P1, HENRY_P2, HENRY_P3, HENRY_P4, sMax, tMax, finalY);
+    const glm::vec3 q4 = henryFordPoint(HENRY_P1, HENRY_P2, HENRY_P3, HENRY_P4, sMin, tMax, finalY);
+
+    for (auto& v : vertices) {
+        if (pointInQuadXZ(v.pos, q1, q2, q3, q4)) {
+            v.pos.y = finalY;
+            v.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+    }
+}
+
+void addDisc(std::vector<Vertex>& vertices,
+             std::vector<unsigned int>& indices,
+             const glm::vec3& center,
+             float radius,
+             int segments,
+             const glm::vec3& normal)
+{
+    const unsigned int start = static_cast<unsigned int>(vertices.size());
+    vertices.push_back({center, normal, glm::vec2(0.5f, 0.5f)});
+    for (int i = 0; i <= segments; ++i) {
+        const float a = (2.0f * glm::pi<float>() * static_cast<float>(i)) / static_cast<float>(segments);
+        const float x = center.x + std::cos(a) * radius;
+        const float z = center.z + std::sin(a) * radius;
+        const glm::vec2 uv(0.5f + std::cos(a) * 0.5f, 0.5f + std::sin(a) * 0.5f);
+        vertices.push_back({glm::vec3(x, center.y, z), normal, uv});
+    }
+    for (int i = 1; i <= segments; ++i) {
+        indices.insert(indices.end(), {start, start + i, start + i + 1});
+    }
+}
+
+void addRingWall(std::vector<Vertex>& vertices,
+                 std::vector<unsigned int>& indices,
+                 const glm::vec3& center,
+                 float radius,
+                 float yMin,
+                 float yMax,
+                 int segments)
+{
+    for (int i = 0; i < segments; ++i) {
+        const float a0 = (2.0f * glm::pi<float>() * static_cast<float>(i)) / static_cast<float>(segments);
+        const float a1 = (2.0f * glm::pi<float>() * static_cast<float>(i + 1)) / static_cast<float>(segments);
+        const glm::vec3 p0(center.x + std::cos(a0) * radius, yMin, center.z + std::sin(a0) * radius);
+        const glm::vec3 p1(center.x + std::cos(a1) * radius, yMin, center.z + std::sin(a1) * radius);
+        const glm::vec3 p2(center.x + std::cos(a1) * radius, yMax, center.z + std::sin(a1) * radius);
+        const glm::vec3 p3(center.x + std::cos(a0) * radius, yMax, center.z + std::sin(a0) * radius);
+        const glm::vec3 normal = glm::normalize(glm::vec3(std::cos((a0 + a1) * 0.5f), 0.0f, std::sin((a0 + a1) * 0.5f)));
+        addQuad(vertices, indices, p0, p1, p2, p3, normal);
+    }
+}
+
+Mesh uploadColoredMesh(const std::vector<Vertex>& vertices,
+                       const std::vector<unsigned int>& indices,
+                       const glm::vec3& color,
+                       int materialMode)
+{
+    Mesh mesh{};
+    glGenVertexArrays(1, &mesh.vao);
+    glGenBuffers(1, &mesh.vbo);
+    glGenBuffers(1, &mesh.ebo);
+
+    glBindVertexArray(mesh.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)), vertices.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(unsigned int)), indices.data(), GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
+    glBindVertexArray(0);
+
+    mesh.indexCount = static_cast<GLsizei>(indices.size());
+    mesh.baseColor = color;
+    glm::vec3 meshMin;
+    glm::vec3 meshMax;
+    computeBounds(vertices, meshMin, meshMax);
+    mesh.bboxMin = meshMin;
+    mesh.bboxMax = meshMax;
+    mesh.boundsCenter = (meshMin + meshMax) * 0.5f;
+    mesh.boundsRadius = glm::length(meshMax - mesh.boundsCenter);
+    mesh.materialMode = materialMode;
+    return mesh;
+}
+
+void appendCustomMesh(Model& model,
+                      glm::vec3& bboxMin,
+                      glm::vec3& bboxMax,
+                      const std::vector<Vertex>& vertices,
+                      const std::vector<unsigned int>& indices,
+                      const glm::vec3& color,
+                      int materialMode,
+                      bool walkable,
+                      bool obstacle)
+{
+    if (vertices.empty() || indices.empty()) {
+        return;
+    }
+
+    glm::vec3 meshMin;
+    glm::vec3 meshMax;
+    computeBounds(vertices, meshMin, meshMax);
+    bboxMin = glm::min(bboxMin, meshMin);
+    bboxMax = glm::max(bboxMax, meshMax);
+
+    if (walkable) {
+        for (std::size_t i = 0; i + 2 < indices.size(); i += 3) {
+            model.walkSurface.push_back({
+                vertices[indices[i]].pos,
+                vertices[indices[i + 1]].pos,
+                vertices[indices[i + 2]].pos
+            });
+        }
+    }
+
+    if (obstacle) {
+        model.obstacles.push_back({
+            glm::vec2(meshMin.x, meshMin.z),
+            glm::vec2(meshMax.x, meshMax.z),
+            meshMin.y,
+            meshMax.y
+        });
+    }
+
+    model.meshes.push_back(uploadColoredMesh(vertices, indices, color, materialMode));
+}
+
+bool isCampusScenePath(const std::string& path)
+{
+    const std::string p = toLower(path);
+    return p.find("campus.") != std::string::npos ||
+           p.find("3_7_2026.") != std::string::npos;
+}
+
+void appendHenryFordSiteDetails(Model& model, glm::vec3& bboxMin, glm::vec3& bboxMax)
+{
+    std::vector<Vertex> treadVertices;
+    std::vector<unsigned int> treadIndices;
+    std::vector<Vertex> riserVertices;
+    std::vector<unsigned int> riserIndices;
+
+    const float highY = 67.45f;
+
+    for (int i = 0; i < HENRY_EDGE_STEPS; ++i) {
+        const float t0 = HENRY_TOP_STEP_BAND * static_cast<float>(i) / static_cast<float>(HENRY_EDGE_STEPS);
+        const float t1 = HENRY_TOP_STEP_BAND * static_cast<float>(i + 1) / static_cast<float>(HENRY_EDGE_STEPS);
+        const float y = highY - HENRY_EDGE_STEP_DROP * static_cast<float>(i) / static_cast<float>(HENRY_EDGE_STEPS);
+        const float nextY = highY - HENRY_EDGE_STEP_DROP * static_cast<float>(i + 1) / static_cast<float>(HENRY_EDGE_STEPS);
+        addHenryFordHorizontal(treadVertices, treadIndices, HENRY_P1, HENRY_P2, HENRY_P3, HENRY_P4,
+                               0.0f, 1.0f, t0, t1, y);
+        addHenryFordRiserT(riserVertices, riserIndices, HENRY_P1, HENRY_P2, HENRY_P3, HENRY_P4,
+                           0.0f, 1.0f, t1, nextY, y);
+    }
+
+    for (int i = 0; i < HENRY_EDGE_STEPS; ++i) {
+        const float s0 = HENRY_LEFT_STEP_BAND * static_cast<float>(i) / static_cast<float>(HENRY_EDGE_STEPS);
+        const float s1 = HENRY_LEFT_STEP_BAND * static_cast<float>(i + 1) / static_cast<float>(HENRY_EDGE_STEPS);
+        const float y = highY - HENRY_EDGE_STEP_DROP * static_cast<float>(i) / static_cast<float>(HENRY_EDGE_STEPS);
+        const float nextY = highY - HENRY_EDGE_STEP_DROP * static_cast<float>(i + 1) / static_cast<float>(HENRY_EDGE_STEPS);
+        addHenryFordHorizontal(treadVertices, treadIndices, HENRY_P1, HENRY_P2, HENRY_P3, HENRY_P4,
+                               s0, s1, HENRY_TOP_STEP_BAND, 1.0f, y);
+        addHenryFordRiserS(riserVertices, riserIndices, HENRY_P1, HENRY_P2, HENRY_P3, HENRY_P4,
+                           s1, HENRY_TOP_STEP_BAND, 1.0f, nextY, y);
+    }
+
+    appendCustomMesh(model, bboxMin, bboxMax, treadVertices, treadIndices,
+                     glm::vec3(0.78f, 0.73f, 0.66f), 12, true, false);
+    appendCustomMesh(model, bboxMin, bboxMax, riserVertices, riserIndices,
+                     glm::vec3(0.46f, 0.42f, 0.37f), 12, false, false);
+}
+
+void appendRectorateFountainDetails(Model& model, glm::vec3& bboxMin, glm::vec3& bboxMax)
+{
+    if (!hasRectorateLayout) {
+        return;
+    }
+
+    const float gateCenterZ = (rectorateLayout.gateMinZ + rectorateLayout.gateMaxZ) * 0.5f;
+    const float xCenter = rectorateLayout.xMin - 22.5f;
+    const float basinTop = rectorateLayout.baseY + 0.55f;
+    const float basinBottom = rectorateLayout.baseY - 0.10f;
+    const float outerRadius = 4.70f;
+    const float innerRadius = 3.64f;
+    const int segments = 32;
+    const glm::vec3 center(xCenter, basinTop, gateCenterZ);
+
+    std::vector<Vertex> stoneVertices;
+    std::vector<unsigned int> stoneIndices;
+    std::vector<Vertex> waterVertices;
+    std::vector<unsigned int> waterIndices;
+
+    addDisc(stoneVertices, stoneIndices, center, outerRadius, segments, glm::vec3(0.0f, 1.0f, 0.0f));
+    addRingWall(stoneVertices, stoneIndices, center, outerRadius, basinBottom, basinTop, segments);
+    addRingWall(stoneVertices, stoneIndices, center, innerRadius, basinBottom, basinTop - 0.08f, segments);
+
+    const glm::vec3 waterCenter(center.x, basinTop - 0.18f, center.z);
+    addDisc(waterVertices, waterIndices, waterCenter, innerRadius - 0.05f, segments, glm::vec3(0.0f, 1.0f, 0.0f));
+
+    appendCustomMesh(model, bboxMin, bboxMax, stoneVertices, stoneIndices,
+                     glm::vec3(0.72f, 0.70f, 0.66f), 6, false, false);
+    appendCustomMesh(model, bboxMin, bboxMax, waterVertices, waterIndices,
+                     glm::vec3(0.18f, 0.40f, 0.58f), 11, false, false);
+}
+
+void appendFenceSegment(std::vector<Vertex>& vertices,
+                        std::vector<unsigned int>& indices,
+                        const glm::vec3& a,
+                        const glm::vec3& b,
+                        float fenceHeight)
+{
+    const glm::vec3 delta = b - a;
+    const float length = glm::length(glm::vec2(delta.x, delta.z));
+    if (length < 1e-4f) {
+        return;
+    }
+    const glm::vec3 dir = glm::normalize(glm::vec3(delta.x, 0.0f, delta.z));
+    const glm::vec3 right(-dir.z, 0.0f, dir.x);
+    const float postSpacing = 6.0f;
+    const int posts = std::max(1, static_cast<int>(std::floor(length / postSpacing)));
+    for (int i = 0; i <= posts; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(posts);
+        const glm::vec3 p = glm::mix(a, b, t);
+        addBox(vertices, indices, p.x - 0.08f, p.x + 0.08f, p.y, p.y + fenceHeight,
+               p.z - 0.08f, p.z + 0.08f, true, false);
+        if (i < posts) {
+            const glm::vec3 q = glm::mix(a, b, static_cast<float>(i + 1) / static_cast<float>(posts));
+            const glm::vec3 half = right * 0.05f;
+            addQuad(vertices, indices,
+                    glm::vec3(p.x, p.y + 0.30f, p.z) - half,
+                    glm::vec3(q.x, q.y + 0.30f, q.z) - half,
+                    glm::vec3(q.x, q.y + fenceHeight - 0.15f, q.z) + half,
+                    glm::vec3(p.x, p.y + fenceHeight - 0.15f, p.z) + half,
+                    right);
+        }
+    }
+}
+
+void appendCampusFenceAndForest(Model& model, glm::vec3& bboxMin, glm::vec3& bboxMax)
+{
+    if (model.roadPoints.size() < 32) {
+        return;
+    }
+
+    const glm::vec3 center = (bboxMin + bboxMax) * 0.5f;
+    std::vector<float> radii;
+    radii.reserve(model.roadPoints.size());
+    float maxRadius = 0.0f;
+    for (const auto& p : model.roadPoints) {
+        const float r = glm::length(glm::vec2(p.x - center.x, p.z - center.z));
+        radii.push_back(r);
+        maxRadius = std::max(maxRadius, r);
+    }
+    std::sort(radii.begin(), radii.end());
+    const float medianRadius = radii[radii.size() / 2];
+    const float innerRingMin = medianRadius * 0.95f;
+    const float innerRingMax = maxRadius * 0.78f;
+
+    struct RadialPoint {
+        bool valid = false;
+        glm::vec3 point = glm::vec3(0.0f);
+        float radius = 0.0f;
+    };
+    constexpr int BIN_COUNT = 72;
+    std::array<RadialPoint, BIN_COUNT> bins{};
+    for (const auto& p : model.roadPoints) {
+        const glm::vec2 d(p.x - center.x, p.z - center.z);
+        const float radius = glm::length(d);
+        if (radius < innerRingMin || radius > innerRingMax) {
+            continue;
+        }
+        float angle = std::atan2(d.y, d.x);
+        if (angle < 0.0f) {
+            angle += 2.0f * glm::pi<float>();
+        }
+        int bin = static_cast<int>(std::floor((angle / (2.0f * glm::pi<float>())) * BIN_COUNT)) % BIN_COUNT;
+        if (!bins[bin].valid || radius > bins[bin].radius) {
+            bins[bin].valid = true;
+            bins[bin].point = p;
+            bins[bin].radius = radius;
+        }
+    }
+
+    std::vector<glm::vec3> fenceLoop;
+    fenceLoop.reserve(BIN_COUNT);
+    for (int i = 0; i < BIN_COUNT; ++i) {
+        if (!bins[i].valid) {
+            continue;
+        }
+        glm::vec3 p = bins[i].point;
+        glm::vec3 outward = glm::normalize(glm::vec3(p.x - center.x, 0.0f, p.z - center.z));
+        if (glm::length(outward) < 1e-4f) {
+            outward = glm::vec3(1.0f, 0.0f, 0.0f);
+        }
+        p += outward * 2.5f;
+        p.y += 0.05f;
+        fenceLoop.push_back(p);
+    }
+
+    if (fenceLoop.size() < 8) {
+        return;
+    }
+
+    model.perimeterPoints = fenceLoop;
+
+    std::vector<Vertex> fenceVertices;
+    std::vector<unsigned int> fenceIndices;
+    for (std::size_t i = 0; i < fenceLoop.size(); ++i) {
+        appendFenceSegment(fenceVertices, fenceIndices,
+                           fenceLoop[i], fenceLoop[(i + 1) % fenceLoop.size()], 2.0f);
+    }
+    appendCustomMesh(model, bboxMin, bboxMax, fenceVertices, fenceIndices,
+                     glm::vec3(0.20f, 0.22f, 0.20f), 13, false, false);
 }
 
 void buildRectorateWallGeometry(const RectorateLayout& layout,
@@ -488,6 +943,8 @@ Mesh buildMesh(const aiScene* scene,
         vertices.push_back(v);
     }
 
+    applyHenryFordTerrainFlattening(meshName, vertices);
+
     glm::vec3 meshMin(std::numeric_limits<float>::max());
     glm::vec3 meshMax(std::numeric_limits<float>::lowest());
     computeBounds(vertices, meshMin, meshMax);
@@ -535,6 +992,12 @@ Mesh buildMesh(const aiScene* scene,
         }
     }
 
+    if (isRoadName(meshName)) {
+        for (const auto& v : vertices) {
+            model.roadPoints.push_back(v.pos);
+        }
+    }
+
     if (isRectorateMeshName(meshName) && !isBuildingRoof(meshName) && hasRectorateLayout) {
         appendRectorateObstacles(model, rectorateLayout);
     } else if (isBuildingName(meshName)) {
@@ -572,10 +1035,17 @@ Mesh buildMesh(const aiScene* scene,
     glBindVertexArray(0);
 
     mesh.indexCount = static_cast<GLsizei>(indices.size());
+    mesh.bboxMin = meshMin;
+    mesh.bboxMax = meshMax;
+    mesh.boundsCenter = (meshMin + meshMax) * 0.5f;
+    mesh.boundsRadius = glm::length(meshMax - mesh.boundsCenter);
 
     // Assign a natural color based on mesh type (buildings, roads, etc.)
     mesh.baseColor = assignColor(meshName);
     mesh.materialMode = materialModeForMesh(meshName, vertices);
+    if (isRectorateMeshName(meshName) && !isBuildingRoof(meshName)) {
+        mesh.materialMode = 4;
+    }
 
     if (ai_mesh->mMaterialIndex < scene->mNumMaterials) {
         aiMaterial* mat = scene->mMaterials[ai_mesh->mMaterialIndex];
@@ -690,6 +1160,11 @@ Model loadModel(const std::string& path)
     glm::vec3 bboxMin(std::numeric_limits<float>::max());
     glm::vec3 bboxMax(std::numeric_limits<float>::lowest());
     processNode(scene, scene->mRootNode, aiMatrix4x4(), modelDir, loadedTextures, model, bboxMin, bboxMax);
+    if (isCampusScenePath(path)) {
+        appendHenryFordSiteDetails(model, bboxMin, bboxMax);
+        appendRectorateFountainDetails(model, bboxMin, bboxMax);
+        appendCampusFenceAndForest(model, bboxMin, bboxMax);
+    }
 
     if (!model.meshes.empty()) {
         model.bboxMin = bboxMin;
